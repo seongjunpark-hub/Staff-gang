@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="CCC 간사"/>
+  <meta name="theme-color" content="#f5ede0"/>
+  <link rel="manifest" href="/manifest.json"/>
+  <link rel="apple-touch-icon" href="/icon-192.png"/>
+  <title>CCC 간사 자기관리</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { font-family: 'Noto Sans KR', sans-serif; background: linear-gradient(160deg,#f5ede0 0%,#ede4d8 50%,#e8ddd0 100%); min-height: 100vh; color: #3a2e22; }
+    #root { min-height: 100vh; }
+    input, textarea, button { font-family: 'Noto Sans KR', sans-serif; }
+    ::-webkit-scrollbar { display: none; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ═══════════════════════════════════════════
+// SUPABASE
+// ═══════════════════════════════════════════
+const SB_URL = "https://cwkcaikiintioqlbtyld.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3a2NhaWtpaW50aW9xbGJ0eWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzOTc4OTUsImV4cCI6MjA5MTk3Mzg5NX0.UlycbuY17UdjJPq65iGDNwjm-gdbZWpDmrWFAkwSo-Y";
+const SBH = { "Content-Type":"application/json", "apikey":SB_KEY, "Authorization":`Bearer ${SB_KEY}`, "Prefer":"return=representation" };
+
+async function sbGetUser(id) {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/users?id=eq.${id}&limit=1`, { headers: SBH });
+    const d = await r.json();
+    if (!d?.length) return null;
+    const u = d[0];
+    return { id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} };
+  } catch { return null; }
+}
+async function sbGetAllUsers() {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/users?order=updated_at.desc`, { headers: SBH });
+    const d = await r.json();
+    if (!Array.isArray(d)) return [];
+    return d.map(u => ({ id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} }));
+  } catch { return []; }
+}
+async function sbSaveUser(user) {
+  try {
+    await fetch(`${SB_URL}/rest/v1/users`, {
+      method:"POST",
+      headers:{ ...SBH, "Prefer":"resolution=merge-duplicates,return=minimal" },
+      body:JSON.stringify({ id:user.id, nickname:user.nickname, character:user.character, xp:user.xp||0, todos:user.todos||{}, history:user.history||[], checkins:user.checkins||[], pokes:user.pokes||[], promo_cleared:user.promoCleared||{}, updated_at:new Date().toISOString() })
+    });
+  } catch {}
+}
+
+// ═══════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════
+const CHARACTERS = [
+  { id:"sprout", name:"새싹",   stages:["🌱","🌿","🍀","🌳","🌲"], color:"#6BA89A", desc:"조용히 뿌리내리는 간사" },
+  { id:"chick",  name:"병아리", stages:["🥚","🐣","🐥","🐔","🦅"], color:"#D4A853", desc:"따뜻하게 품는 간사" },
+  { id:"fox",    name:"여우",   stages:["🦊","🦊","🦊","🦊","🦊"], color:"#C8956C", desc:"지혜롭게 사역하는 간사" },
+  { id:"star",   name:"별꽃",   stages:["🌸","🌺","🌼","🌻","⭐"], color:"#A889B8", desc:"빛나는 사역을 꿈꾸는 간사" },
+  { id:"turtle", name:"거북이", stages:["🥚","🐢","🐢","🐢","🦕"], color:"#7B9EA8", desc:"꾸준히 성실한 간사" },
+  { id:"bunny",  name:"토끼",   stages:["🐰","🐰","🐇","🐇","🦁"], color:"#C8A86B", desc:"활기차게 뛰어다니는 간사" },
+];
+function xpToLevel(xp) { return Math.min(100, Math.floor((xp||0)/20)+1); }
+function levelToStage(lv) { if(lv<20)return 0;if(lv<40)return 1;if(lv<60)return 2;if(lv<80)return 3;return 4; }
+function isPromoLevel(lv) { return lv%10===0&&lv>0; }
+const PROMO_MISSIONS = {
+  10:"이번 주 경건의 시간 5회 완수하기", 20:"후원자 1명에게 손편지 쓰기",
+  30:"전도 대상자 3명 정하고 기도 시작하기", 40:"팀원 전체에게 격려 메시지 보내기",
+  50:"사역 비전문 작성하기 (A4 1장)", 60:"육성 중인 학생 리더와 수련회 계획하기",
+  70:"새로운 캠퍼스 전도 전략 1가지 실행하기", 80:"파송할 학생 리더 1명 선정하고 준비시키기",
+  90:"간사 사역 경험 나눔 세션 팀 앞에서 하기", 100:"🎉 100레벨! 팀 전체 감사예배 인도하기",
+};
+const DOMAINS = [
+  { id:"devotion", name:"하나님과의 관계", emoji:"✝️", color:"#C8956C", sub:"경건의 시간",
+    questions:[{id:"d1",text:"경건의 시간을 주 5회 이상 규칙적으로 갖고 있다."},{id:"d2",text:"QT 후 묵상 내용을 기록하거나 삶에 적용하고 있다."},{id:"d3",text:"기도 제목을 목록으로 관리하고 꾸준히 기도하고 있다."},{id:"d4",text:"하나님과의 관계에서 현재 영적 활력을 느끼고 있다."},{id:"d5",text:"말씀을 통해 하나님의 음성을 듣고 순종하려 노력하고 있다."}],
+    todos:{ daily:["아침 QT 30분 확보하기","묵상 핵심 한 줄 메모하기","기도 제목 3가지 기도하기","잠들기 전 감사 1가지 적기"], weekly:["QT 회수 점검 및 보완 계획","기도 제목 업데이트","영적 일기 쓰기","신앙 서적/설교 1개 접하기"] }},
+  { id:"evangelism", name:"전도", emoji:"📢", color:"#E07A5F", sub:"캠퍼스 전도",
+    questions:[{id:"ev1",text:"전도 대상자 명단을 갖고 정기적으로 기도하고 있다."},{id:"ev2",text:"이번 달 새로운 학생에게 복음을 전했다."},{id:"ev3",text:"전도 후 후속 관리(연락, 만남)를 꾸준히 하고 있다."},{id:"ev4",text:"캠퍼스 전도에 두려움 없이 자연스럽게 참여하고 있다."},{id:"ev5",text:"학생들이 스스로 전도할 수 있도록 훈련시키고 있다."}],
+    todos:{ daily:["전도 대상자 1명 이름 부르며 기도하기","오늘 만난 학생과 대화 나누기"], weekly:["전도 대상자 명단 업데이트","전도 시도 1회 실행하기","접촉한 학생 후속 연락하기","학생 전도 훈련 피드백"] }},
+  { id:"nurture", name:"육성", emoji:"🌿", color:"#8FAF7E", sub:"제자훈련 & 양육",
+    questions:[{id:"nu1",text:"담당 학생들과 정기적으로 1:1 만남을 갖고 있다."},{id:"nu2",text:"각 학생의 영적 상태와 삶의 맥락을 파악하고 있다."},{id:"nu3",text:"단계별 제자훈련 과정을 체계적으로 진행하고 있다."},{id:"nu4",text:"학생들이 나를 영적 멘토로 신뢰하고 있다고 느낀다."},{id:"nu5",text:"학생들이 말씀을 스스로 공부하고 적용하도록 돕고 있다."}],
+    todos:{ daily:["담당 학생 1명에게 안부/격려 연락하기","학생 기도 목록 보며 기도하기"], weekly:["1:1 만남 일정 확인 및 준비","학생 영적 상태 노트 업데이트","제자훈련 다음 단계 준비하기","학생 변화 및 성장 기록하기"] }},
+  { id:"sending", name:"파송", emoji:"🚀", color:"#9090C0", sub:"리더 세움 & 파송",
+    questions:[{id:"se1",text:"리더로 세울 학생을 의도적으로 발굴하고 있다."},{id:"se2",text:"리더 후보를 훈련시키는 구체적인 계획이 있다."},{id:"se3",text:"리더들이 자율적으로 사역을 이끌도록 권한을 위임하고 있다."},{id:"se4",text:"파송된 리더들과 지속적으로 연결하고 지원하고 있다."},{id:"se5",text:"내 사역 목표가 나 없이도 돌아가는 공동체임을 인식하고 있다."}],
+    todos:{ daily:["파송 준비 중인 리더 위해 기도하기"], weekly:["리더 후보 1명과 집중 만남 갖기","리더에게 사역 권한 1가지 위임하기","파송 리더 근황 확인 및 격려","리더십 훈련 피드백 정리하기"] }},
+  { id:"preaching", name:"설교 / 강의", emoji:"📖", color:"#7B9EA8", sub:"말씀 사역",
+    questions:[{id:"p1",text:"설교/강의 준비에 충분한 시간을 투자하고 있다."},{id:"p2",text:"본문 연구와 적용 사이의 균형을 잘 맞추고 있다."},{id:"p3",text:"전달력에 대해 피드백을 받고 개선하고 있다."},{id:"p4",text:"설교/강의 후 스스로 평가하고 보완한다."},{id:"p5",text:"청중의 삶에 맞는 구체적인 적용점을 제시하고 있다."}],
+    todos:{ daily:["설교 본문 매일 읽고 묵상하기","설교 아이디어/예화 메모하기"], weekly:["설교 개요 초안 작성 (5일 전)","지난 설교 자기평가 작성","거울 앞 5분 전달 연습","동료에게 피드백 요청하기"] }},
+  { id:"support", name:"후원자 개발", emoji:"🤝", color:"#C8A86B", sub:"재정 파트너십",
+    questions:[{id:"s1",text:"신규 후원자를 월 1명 이상 지속적으로 개발하고 있다."},{id:"s2",text:"기존 후원자에게 정기적으로 사역 소식을 전하고 있다."},{id:"s3",text:"후원 감사 연락을 꾸준히 하고 있다."},{id:"s4",text:"후원자와의 관계를 사역 파트너십으로 인식하고 있다."},{id:"s5",text:"후원 개발에 두려움 없이 자연스럽게 요청할 수 있다."}],
+    todos:{ daily:["후원자 1명에게 감사/안부 메시지","사역 소식 뉴스레터 조금씩 작성"], weekly:["신규 후원자 접촉 대상 연락하기","후원자 명단 점검하기","월간 소식지 발송 준비","후원 달성률 점검하기"] }},
+  { id:"operations", name:"실질적 업무", emoji:"⚙️", color:"#B8876E", sub:"캠퍼스 사역 운영",
+    questions:[{id:"o1",text:"캠퍼스 모임 준비와 진행을 체계적으로 하고 있다."},{id:"o2",text:"채플 및 행사 준비를 미리 계획하고 실행하고 있다."},{id:"o3",text:"행정 업무를 기한 내에 처리하고 있다."},{id:"o4",text:"업무 우선순위를 명확히 하고 중요한 일에 집중하고 있다."},{id:"o5",text:"팀원, 학생, 교회와 소통이 명확하고 원활하다."}],
+    todos:{ daily:["오늘 업무 TOP 3 정하기","미응답 연락 처리하기","내일 일정 미리 확인하기"], weekly:["모임 준비물 및 역할 분담 확인","다음 주 행사 사전 준비","미완료 행정 업무 처리","팀원과 주간 브리핑"] }},
+  { id:"growth", name:"자기계발 / 휴식", emoji:"📚", color:"#6BA89A", sub:"성장과 회복",
+    questions:[{id:"g1",text:"독서, 강의 등 자기계발에 주기적으로 시간을 투자하고 있다."},{id:"g2",text:"사역 외 취미나 휴식 활동이 있고 누리고 있다."},{id:"g3",text:"번아웃 없이 사역의 기쁨을 유지하고 있다."},{id:"g4",text:"안식일(쉬는 날)을 의도적으로 지키고 있다."},{id:"g5",text:"배운 내용을 사역에 적용하려는 시도를 하고 있다."}],
+    todos:{ daily:["책 10페이지 또는 팟캐스트 15분","쉬는 시간 30분 이상 확보","좋아하는 것 한 가지 즐기기"], weekly:["안식일 날짜와 계획 미리 정하기","독서 목록 점검 및 다음 책 선정","배운 것 사역 적용 1가지 정하기","회복 활동 계획하고 실행하기"] }},
+  { id:"time", name:"시간 관리", emoji:"⏰", color:"#D4A853", sub:"일정과 집중",
+    questions:[{id:"t1",text:"주간 일정을 미리 계획하고 따르고 있다."},{id:"t2",text:"중요한 일과 급한 일을 구분해서 처리하고 있다."},{id:"t3",text:"SNS, 유튜브 등 주의를 흐트러뜨리는 것들을 잘 통제하고 있다."},{id:"t4",text:"하루 마감 시 오늘 한 일을 점검하는 루틴이 있다."},{id:"t5",text:"약속 시간과 마감 기한을 잘 지키고 있다."}],
+    todos:{ daily:["하루 타임블로킹으로 짜기","SNS 사용 시간 제한 확인","하루 마감 3줄 기록","내일 중요한 일 1가지 미리 정하기"], weekly:["주간 캘린더 작성 (월요일 30분)","지난 주 시간 사용 돌아보기","마감 업무 역산 계획하기","방해 요소 차단 방법 찾기"] }},
+  { id:"emotion", name:"정서 관리", emoji:"💛", color:"#A889B8", sub:"내면 건강",
+    questions:[{id:"e1",text:"부정적 감정을 건강하게 처리하고 있다."},{id:"e2",text:"마음을 나눌 수 있는 동료나 멘토가 있다."},{id:"e3",text:"사역 실패나 어려움 앞에서 회복탄력성을 갖고 있다."},{id:"e4",text:"현재 정서적으로 안정된 상태라고 느낀다."},{id:"e5",text:"자기 자신을 은혜 안에서 바라보며 지나치게 비판하지 않는다."}],
+    todos:{ daily:["오늘 감정 상태 1~10점 체크","감사한 일 3가지 적기","스트레스 시 5분 산책/호흡"], weekly:["동료/멘토와 솔직한 대화 나누기","힘들었던 순간 회복 방법 찾기","나 자신에게 격려 한 마디 써주기","정서 회복 활동 계획하기"] }},
+  { id:"physical", name:"체력 관리", emoji:"💪", color:"#7A9E7E", sub:"몸 건강",
+    questions:[{id:"ph1",text:"주 2회 이상 규칙적으로 운동하고 있다."},{id:"ph2",text:"수면 시간이 충분하고 질적으로 좋다(7시간 이상)."},{id:"ph3",text:"식사를 규칙적으로 균형 있게 하고 있다."},{id:"ph4",text:"몸의 피로 신호를 무시하지 않고 돌보고 있다."},{id:"ph5",text:"물을 충분히 마시고 카페인 의존도가 높지 않다."}],
+    todos:{ daily:["물 8잔 마시기","점심 꼭 챙겨 먹기","취침 1시간 전 핸드폰 내려놓기","10분 걷기/스트레칭"], weekly:["운동 2회 이상 일정에 넣기","수면 패턴 점검하기","식사 습관 점검하기","몸 이상 시 병원 가기"] }},
+  { id:"church", name:"교회 사역", emoji:"⛪", color:"#9090C0", sub:"청년부/청소년부/찬양팀",
+    questions:[{id:"ch1",text:"교회 사역을 기쁨으로 감당하고 있다."},{id:"ch2",text:"교회 사역과 CCC 사역 사이에 균형을 유지하고 있다."},{id:"ch3",text:"교회 사역에서 내 역할과 경계를 명확히 알고 있다."},{id:"ch4",text:"교회 공동체 안에서 영적으로 공급받고 있다."},{id:"ch5",text:"담당 교역자 또는 팀원과 소통이 원활하고 협력이 잘 된다."}],
+    todos:{ daily:["담당 청년/청소년 1명 위해 기도하기","찬양팀 악보/연습 준비하기"], weekly:["교회 사역 담당자와 소통 확인","CCC-교회 시간 배분 점검","청년부/청소년 모임 준비 및 참여","교회 예배에 온전히 참여하기"] }},
+];
+const CHECKIN_ITEMS = {
+  daily:[
+    {id:"ci_d1",domain:"devotion",text:"오늘 경건의 시간을 가졌다."},
+    {id:"ci_d2",domain:"evangelism",text:"전도 대상자를 위해 기도하거나 접촉했다."},
+    {id:"ci_d3",domain:"nurture",text:"담당 학생에게 연락하거나 만났다."},
+    {id:"ci_d4",domain:"time",text:"오늘 중요한 일 TOP 3를 처리했다."},
+    {id:"ci_d5",domain:"emotion",text:"정서적으로 안정된 하루였다."},
+    {id:"ci_d6",domain:"physical",text:"식사·수면·운동 중 2가지 이상 챙겼다."},
+    {id:"ci_d7",domain:"growth",text:"쉬거나 나를 회복시키는 시간을 가졌다."},
+  ],
+  weekly:[
+    {id:"ci_w1",domain:"devotion",text:"이번 주 QT를 5회 이상 했다."},
+    {id:"ci_w2",domain:"evangelism",text:"복음을 전하거나 전도를 시도했다."},
+    {id:"ci_w3",domain:"nurture",text:"학생과 1:1 만남을 가졌다."},
+    {id:"ci_w4",domain:"sending",text:"리더 후보와 의도적인 만남을 가졌다."},
+    {id:"ci_w5",domain:"support",text:"후원자에게 연락하거나 신규 개발을 시도했다."},
+    {id:"ci_w6",domain:"operations",text:"주요 업무를 기한 내에 처리했다."},
+    {id:"ci_w7",domain:"emotion",text:"동료/멘토와 마음을 나눴다."},
+    {id:"ci_w8",domain:"physical",text:"운동을 2회 이상 했다."},
+    {id:"ci_w9",domain:"growth",text:"안식일을 의도적으로 지켰다."},
+    {id:"ci_w10",domain:"church",text:"교회 사역을 기쁨으로 감당했다."},
+  ],
+};
+const POKE_MSGS = ["파이팅! 💪","오늘도 화이팅! 🔥","당신의 사역을 응원해요 🙏","콕! 힘내요 😊","하나님이 함께하세요 ✨","우리 팀이 응원해요! 🎉"];
+
+// ═══════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════
+function calcScore(domain, answers) {
+  if (!answers) return null;
+  const vals = domain.questions.map(q => answers[q.id]).filter(v => v !== undefined && v !== null);
+  if (!vals.length) return null;
+  return Math.round((vals.reduce((a,b)=>a+b,0) / (vals.length*4)) * 100);
+}
+function getLevel(score) {
+  if (score===null||score===undefined) return {label:"미응답",color:"#aaa"};
+  if (score>=80) return {label:"강점",color:"#6BA89A"};
+  if (score>=60) return {label:"양호",color:"#8FAF7E"};
+  if (score>=40) return {label:"보통",color:"#D4A853"};
+  return {label:"집중필요",color:"#C0706A"};
+}
+function fmtDate(iso) { if(!iso)return""; const d=new Date(iso); return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`; }
+function getUid() { try { return localStorage.getItem("ccc_uid"); } catch { return null; } }
+function setUid(id) { try { localStorage.setItem("ccc_uid", id); } catch {} }
+
+// ═══════════════════════════════════════════
+// RADAR CHART
+// ═══════════════════════════════════════════
+function RadarChart({ scores, size=260 }) {
+  const n=scores.length, cx=size/2, cy=size/2, r=size/2-38;
+  const pts = scores.map((s,i) => {
+    const a=(i/n)*2*Math.PI-Math.PI/2, v=Math.max(0,Math.min(1,(s.score||0)/100));
+    return { x:cx+r*v*Math.cos(a), y:cy+r*v*Math.sin(a), lx:cx+(r+26)*Math.cos(a), ly:cy+(r+26)*Math.sin(a) };
+  });
+  const poly = pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} style={{width:"100%",maxWidth:size}}>
+      {[.25,.5,.75,1].map(lv=>scores.map((_,i)=>{
+        const a1=(i/n)*2*Math.PI-Math.PI/2, a2=((i+1)/n)*2*Math.PI-Math.PI/2;
+        return <line key={`g${lv}${i}`} x1={(cx+r*lv*Math.cos(a1)).toFixed(1)} y1={(cy+r*lv*Math.sin(a1)).toFixed(1)} x2={(cx+r*lv*Math.cos(a2)).toFixed(1)} y2={(cy+r*lv*Math.sin(a2)).toFixed(1)} stroke="#e0d8ce" strokeWidth={.8}/>;
+      }))}
+      {scores.map((_,i)=>{ const a=(i/n)*2*Math.PI-Math.PI/2; return <line key={`sp${i}`} x1={cx} y1={cy} x2={(cx+r*Math.cos(a)).toFixed(1)} y2={(cy+r*Math.sin(a)).toFixed(1)} stroke="#d0c8be" strokeWidth={.8}/>; })}
+      <polygon points={poly} fill="rgba(139,115,85,.15)" stroke="#8B7355" strokeWidth={2} strokeLinejoin="round"/>
+      {pts.map((p,i)=><circle key={`d${i}`} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={3.5} fill={scores[i].color}/>)}
+      {pts.map((p,i)=><text key={`l${i}`} x={p.lx.toFixed(1)} y={p.ly.toFixed(1)} textAnchor="middle" dominantBaseline="middle" fontSize="10" fill="#5a4a38">{scores[i].emoji}</text>)}
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════
+// CHAR BADGE
+// ═══════════════════════════════════════════
+function CharBadge({ user, compact }) {
+  const char = CHARACTERS.find(c=>c.id===user.character)||CHARACTERS[0];
+  const lv = xpToLevel(user.xp||0);
+  const stage = levelToStage(lv);
+  const xpInLv = (user.xp||0)%20;
+  const pendingPromo = isPromoLevel(lv) && !(user.promoCleared||{})[lv];
+  if (compact) return (
+    <div style={{display:"flex",alignItems:"center",gap:8}}>
+      <span style={{fontSize:26}}>{char.stages[stage]}</span>
+      <div>
+        <div style={{fontSize:13,fontWeight:700,color:char.color}}>{user.nickname}</div>
+        <div style={{fontSize:10,color:"#8a7260"}}>Lv.{lv} {char.name} · {user.xp||0} XP</div>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{background:"white",borderRadius:20,padding:"20px",boxShadow:"0 2px 16px rgba(139,115,85,.12)",textAlign:"center",position:"relative",marginBottom:12}}>
+      {pendingPromo && <div style={{position:"absolute",top:10,right:10,background:"#E07A5F",color:"white",borderRadius:8,padding:"3px 8px",fontSize:10,fontWeight:700}}>🎯 전직미션!</div>}
+      <div style={{fontSize:54,marginBottom:6,lineHeight:1}}>{char.stages[stage]}</div>
+      <div style={{fontFamily:"'Noto Serif KR',serif",fontSize:16,fontWeight:700,color:char.color}}>{user.nickname}</div>
+      <div style={{fontSize:12,color:"#8a7260",marginBottom:10}}>Lv.{lv} {char.name}</div>
+      <div style={{height:6,background:"#f0e8de",borderRadius:3,marginBottom:4,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${(xpInLv/20)*100}%`,background:char.color,borderRadius:3,transition:"width .4s"}}/>
+      </div>
+      <div style={{fontSize:10,color:"#aaa"}}>{xpInLv} / 20 XP → Lv.{Math.min(100,lv+1)}</div>
+      {pendingPromo && (
+        <div style={{marginTop:12,background:"#fff8f0",borderRadius:12,padding:"10px 12px",border:"1px solid #f0d8b8",textAlign:"left"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#b87040",marginBottom:4}}>🎯 전직 미션 Lv.{lv}</div>
+          <div style={{fontSize:11,color:"#7a5030",lineHeight:1.5}}>{PROMO_MISSIONS[lv]}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════
+function App() {
+  const [myId, setMyId] = useState(null);
+  const [myData, setMyData] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("home");
+  const [loginStep, setLoginStep] = useState("choose");
+  const [regForm, setRegForm] = useState({ nickname:"", character:"sprout" });
+  const [quiz, setQuiz] = useState({ active:false, answers:{}, domainIdx:0 });
+  const [todoSel, setTodoSel] = useState({ domain:"devotion", type:"daily" });
+  const [checkin, setCheckin] = useState({ type:"daily", answers:{}, note:"" });
+  const [teamMember, setTeamMember] = useState(null);
+  const [promoModal, setPromoModal] = useState(null);
+
+  const loadAll = useCallback(async () => {
+    const users = await sbGetAllUsers();
+    setAllUsers(users);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      await loadAll();
+      const savedId = getUid();
+      if (savedId) { const d = await sbGetUser(savedId); if (d) { setMyId(savedId); setMyData(d); } }
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => { const iv = setInterval(loadAll, 15000); return () => clearInterval(iv); }, [loadAll]);
+
+  const saveMe = useCallback(async (data) => {
+    setMyData(data);
+    await sbSaveUser(data);
+    setAllUsers(prev => [...prev.filter(u=>u.id!==data.id), data]);
+  }, []);
+
+  const addXP = useCallback(async (data, amount) => {
+    const oldLv = xpToLevel(data.xp||0);
+    const newXp = (data.xp||0) + amount;
+    const newLv = xpToLevel(newXp);
+    const updated = { ...data, xp: newXp };
+    setMyData(updated);
+    await sbSaveUser(updated);
+    setAllUsers(prev => [...prev.filter(u=>u.id!==updated.id), updated]);
+    if (newLv !== oldLv && isPromoLevel(newLv)) setPromoModal(newLv);
+    return updated;
+  }, []);
+
+  const handleRegister = async () => {
+    if (!regForm.nickname.trim()) return;
+    const id = `u${Date.now()}`;
+    const user = { id, nickname:regForm.nickname.trim(), character:regForm.character, xp:0, todos:{}, history:[], checkins:[], pokes:[], promoCleared:{} };
+    await sbSaveUser(user);
+    setUid(id); setMyId(id); setMyData(user);
+    setAllUsers(prev => [...prev, user]);
+    setTab("home");
+  };
+
+  const handleLogin = async (uid) => {
+    const d = await sbGetUser(uid);
+    if (d) { setUid(uid); setMyId(uid); setMyData(d); setTab("home"); }
+  };
+
+  const finishQuiz = async () => {
+    const entry = { id:Date.now(), date:new Date().toISOString(), answers:{...quiz.answers} };
+    const updated = { ...myData, history:[...(myData.history||[]), entry] };
+    await saveMe(updated);
+    setQuiz({ active:false, answers:{}, domainIdx:0 });
+    setTab("result");
+  };
+
+  const toggleTodo = useCallback(async (domainId, type, idx) => {
+    if (!myData) return;
+    const key = `${domainId}_${type}_${idx}`;
+    const wasDone = !!(myData.todos||{})[key];
+    const newTodos = { ...(myData.todos||{}), [key]: !wasDone };
+    const updated = { ...myData, todos: newTodos };
+    if (!wasDone) {
+      await addXP(updated, 1);
+    } else {
+      await saveMe(updated);
+    }
+  }, [myData, saveMe, addXP]);
+
+  const todoChecked = (domainId, type, idx) => !!(myData?.todos||{})[`${domainId}_${type}_${idx}`];
+
+  const submitCheckin = async () => {
+    if (!myData) return;
+    const entry = { id:Date.now(), date:new Date().toISOString(), type:checkin.type, answers:{...checkin.answers}, note:checkin.note };
+    const withCheckin = { ...myData, checkins:[...(myData.checkins||[]), entry] };
+    await addXP(withCheckin, 2);
+    setCheckin({ type:"daily", answers:{}, note:"" });
+    alert("점검 완료! +2 XP ✅");
+  };
+
+  const pokeMember = async (targetId) => {
+    const target = allUsers.find(u=>u.id===targetId);
+    if (!target) return;
+    const msg = POKE_MSGS[Math.floor(Math.random()*POKE_MSGS.length)];
+    const poke = { id:Date.now(), from:myData.nickname, msg, date:new Date().toISOString() };
+    const updated = { ...target, pokes:[...(target.pokes||[]).slice(-19), poke] };
+    await sbSaveUser(updated);
+    setAllUsers(prev => [...prev.filter(u=>u.id!==targetId), updated]);
+    alert(`${target.nickname}에게 콕 찌르기를 보냈어요! 🫵`);
+  };
+
+  const clearPromo = async (lv) => {
+    if (!myData) return;
+    const updated = { ...myData, promoCleared:{...(myData.promoCleared||{}), [lv]:true} };
+    await saveMe(updated);
+    setPromoModal(null);
+  };
+
+  const teammates = allUsers.filter(u => u.id !== myId);
+  const latestResult = myData?.history?.slice(-1)[0] || null;
+  const resultScores = latestResult ? DOMAINS.map(d => ({ ...d, score: calcScore(d, latestResult.answers) })) : null;
+  const quizD = DOMAINS[quiz.domainIdx];
+  const quizDone = quizD?.questions.every(q => quiz.answers[q.id] !== undefined);
+  const totalQ = DOMAINS.reduce((s,d)=>s+d.questions.length, 0);
+  const answeredQ = Object.keys(quiz.answers).length;
+
+  const S = {
+    page: { maxWidth:520, margin:"0 auto", padding:"24px 18px" },
+    card: { background:"white", borderRadius:16, padding:"16px 18px", boxShadow:"0 1px 12px rgba(139,115,85,.09)", marginBottom:12 },
+    btn: (bg="#8B7355") => ({ background:bg, color:"white", border:"none", borderRadius:10, padding:"11px 20px", fontSize:13, fontWeight:700, cursor:"pointer" }),
+    outBtn: { background:"white", border:"1.5px solid #d0c8be", borderRadius:10, padding:"10px 16px", fontSize:13, color:"#5a4a38", cursor:"pointer" },
+    tabBtn: (on) => ({ flex:1, padding:"10px 4px", borderRadius:10, border:"none", background:on?"#8B7355":"transparent", color:on?"white":"#8a7260", fontSize:11, fontWeight:on?700:400, cursor:"pointer" }),
+  };
+  const NAV = [{id:"home",e:"🏠",l:"홈"},{id:"todos",e:"✅",l:"투두"},{id:"checkin",e:"📋",l:"점검"},{id:"team",e:"👥",l:"팀"},{id:"history",e:"📈",l:"기록"}];
+
+  // ── LOADING
+  if (loading) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:12}}>✝️</div>
+        <div style={{fontSize:14,color:"#8a7260"}}>서버 연결 중...</div>
+      </div>
+    </div>
+  );
+
+  // ── LOGIN
+  if (!myId) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{maxWidth:400,width:"100%",padding:"32px 20px"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:44,marginBottom:8}}>✝️</div>
+          <h1 style={{fontFamily:"'Noto Serif KR',serif",fontSize:22,fontWeight:700,marginBottom:4}}>CCC 간사 자기관리</h1>
+          <p style={{fontSize:13,color:"#8a7260"}}>팀과 함께 성장하는 사역 관리 앱</p>
+        </div>
+        {loginStep==="choose" && <>
+          {allUsers.length>0 && (
+            <div style={{...S.card,marginBottom:16}}>
+              <p style={{fontSize:13,fontWeight:700,marginBottom:12}}>👋 기존 계정으로 로그인</p>
+              {allUsers.map(u => {
+                const char=CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
+                const lv=xpToLevel(u.xp||0);
+                return (
+                  <div key={u.id} onClick={()=>handleLogin(u.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #f0e8de",cursor:"pointer"}}>
+                    <span style={{fontSize:24}}>{char.stages[levelToStage(lv)]}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600}}>{u.nickname}</div>
+                      <div style={{fontSize:11,color:"#8a7260"}}>Lv.{lv} {char.name} · {u.xp||0} XP</div>
+                    </div>
+                    <span style={{fontSize:12,color:"#8B7355"}}>→</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <button onClick={()=>setLoginStep("register")} style={{...S.btn(),width:"100%",padding:"14px",fontSize:15}}>+ 새 계정 만들기</button>
+        </>}
+        {loginStep==="register" && (
+          <div style={S.card}>
+            <p style={{fontSize:15,fontWeight:700,marginBottom:16,fontFamily:"'Noto Serif KR',serif"}}>새 계정 만들기</p>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:12,color:"#8a7260",display:"block",marginBottom:6}}>닉네임</label>
+              <input value={regForm.nickname} onChange={e=>setRegForm(p=>({...p,nickname:e.target.value}))} placeholder="예: 박간사, 믿음이" style={{width:"100%",border:"1.5px solid #e0d5c8",borderRadius:10,padding:"10px 12px",fontSize:14,outline:"none"}}/>
+            </div>
+            <div style={{marginBottom:18}}>
+              <label style={{fontSize:12,color:"#8a7260",display:"block",marginBottom:8}}>나의 캐릭터</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {CHARACTERS.map(c=>(
+                  <div key={c.id} onClick={()=>setRegForm(p=>({...p,character:c.id}))} style={{border:`2px solid ${regForm.character===c.id?c.color:"#e0d5c8"}`,borderRadius:12,padding:"10px 6px",textAlign:"center",cursor:"pointer",background:regForm.character===c.id?`${c.color}18`:"white"}}>
+                    <div style={{fontSize:28}}>{c.stages[0]}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:c.color,marginTop:4}}>{c.name}</div>
+                    <div style={{fontSize:9,color:"#aaa",marginTop:2}}>{c.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button onClick={handleRegister} disabled={!regForm.nickname.trim()} style={{...S.btn(),width:"100%",padding:"13px",opacity:regForm.nickname.trim()?1:.5}}>시작하기 🌱</button>
+            {allUsers.length>0 && <button onClick={()=>setLoginStep("choose")} style={{...S.outBtn,width:"100%",marginTop:8,textAlign:"center"}}>← 돌아가기</button>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── QUIZ
+  if (quiz.active) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",paddingBottom:40}}>
+      <div style={S.page}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+          <button onClick={()=>setQuiz(p=>({...p,active:false}))} style={{...S.outBtn,padding:"7px 14px"}}>← 나가기</button>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#8a7260",marginBottom:4}}><span>{answeredQ}/{totalQ}</span><span>{Math.round(answeredQ/totalQ*100)}%</span></div>
+            <div style={{height:5,background:"#e0d5c8",borderRadius:3}}><div style={{height:"100%",width:`${answeredQ/totalQ*100}%`,background:"#8B7355",borderRadius:3,transition:"width .3s"}}/></div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:5,overflowX:"auto",marginBottom:16,paddingBottom:4}}>
+          {DOMAINS.map((d,i)=>{ const done=d.questions.every(q=>quiz.answers[q.id]!==undefined); return <button key={d.id} onClick={()=>setQuiz(p=>({...p,domainIdx:i}))} style={{flexShrink:0,background:i===quiz.domainIdx?d.color:done?`${d.color}25`:"white",color:i===quiz.domainIdx?"white":"#5a4a38",border:`1.5px solid ${i===quiz.domainIdx?d.color:"#ddd"}`,borderRadius:18,padding:"4px 11px",fontSize:11,cursor:"pointer",fontWeight:i===quiz.domainIdx?700:400}}>{d.emoji}{done&&i!==quiz.domainIdx?" ✓":""}</button>; })}
+        </div>
+        <div style={{...S.card,borderTop:`4px solid ${quizD.color}`,marginBottom:14}}>
+          <div style={{marginBottom:14}}><span style={{fontSize:22}}>{quizD.emoji}</span><h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:16,fontWeight:700,margin:"4px 0 2px"}}>{quizD.name}</h2><span style={{fontSize:11,color:quizD.color,fontWeight:600}}>{quizD.sub}</span></div>
+          {quizD.questions.map((q,qi)=>(
+            <div key={q.id} style={{marginBottom:18}}>
+              <p style={{fontSize:13,lineHeight:1.7,marginBottom:8}}><span style={{fontWeight:700,color:quizD.color}}>Q{qi+1}. </span>{q.text}</p>
+              <div style={{display:"flex",gap:5}}>
+                {[0,1,2,3,4].map(val=>(
+                  <button key={val} onClick={()=>setQuiz(p=>({...p,answers:{...p.answers,[q.id]:val}}))} style={{flex:1,height:36,borderRadius:7,border:quiz.answers[q.id]===val?`2px solid ${quizD.color}`:"1.5px solid #e0d5c8",background:quiz.answers[q.id]===val?`${quizD.color}25`:"white",cursor:"pointer",fontSize:12,fontWeight:quiz.answers[q.id]===val?700:400,color:quiz.answers[q.id]===val?quizD.color:"#bbb"}}>{val+1}</button>
+                ))}
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:3,fontSize:10,color:"#bbb"}}><span>전혀 아니다</span><span>매우 그렇다</span></div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {quiz.domainIdx>0&&<button onClick={()=>setQuiz(p=>({...p,domainIdx:p.domainIdx-1}))} style={{...S.outBtn,flex:1}}>← 이전</button>}
+          <button onClick={()=>{ if(quiz.domainIdx<DOMAINS.length-1) setQuiz(p=>({...p,domainIdx:p.domainIdx+1})); else finishQuiz(); }} disabled={!quizDone} style={{...S.btn(quizDone?"#8B7355":"#ccc"),flex:2,opacity:quizDone?1:.5,cursor:quizDone?"pointer":"not-allowed"}}>
+            {quiz.domainIdx<DOMAINS.length-1?"다음 →":"결과 보기 🎯"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── MAIN
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",paddingBottom:80}}>
+      {promoModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{...S.card,maxWidth:340,width:"100%",textAlign:"center",padding:"28px 24px",marginBottom:0}}>
+            <div style={{fontSize:44,marginBottom:8}}>🎉</div>
+            <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700,marginBottom:4}}>레벨 {promoModal} 달성!</h2>
+            <div style={{background:"#fff8f0",borderRadius:12,padding:"14px",border:"1px solid #f0d8b8",margin:"12px 0",textAlign:"left"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#b87040",marginBottom:6}}>🎯 전직 미션</div>
+              <div style={{fontSize:13,color:"#7a5030",lineHeight:1.6}}>{PROMO_MISSIONS[promoModal]}</div>
+            </div>
+            <button onClick={()=>clearPromo(promoModal)} style={{...S.btn(),width:"100%"}}>도전할게요 💪</button>
+          </div>
+        </div>
+      )}
+
+      {/* HOME */}
+      {tab==="home" && (
+        <div style={S.page}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <CharBadge user={myData} compact/>
+            <button onClick={()=>{setMyId(null);setMyData(null);setUid("");}} style={{...S.outBtn,fontSize:11,padding:"6px 12px"}}>로그아웃</button>
+          </div>
+          <CharBadge user={myData}/>
+          {myData?.pokes?.length>0 && (
+            <div style={{...S.card,background:"#fffbf0",border:"1px solid #f0e0a0"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#b87040",marginBottom:8}}>🫵 받은 콕찌르기</div>
+              {[...myData.pokes].reverse().slice(0,3).map(pk=>(
+                <div key={pk.id} style={{fontSize:12,color:"#7a5030",padding:"4px 0",borderBottom:"1px solid #f0e8de"}}><strong>{pk.from}</strong>: {pk.msg} <span style={{color:"#aaa",fontSize:10}}>{fmtDate(pk.date)}</span></div>
+              ))}
+            </div>
+          )}
+          <button onClick={()=>setQuiz({active:true,answers:{},domainIdx:0})} style={{...S.btn(),width:"100%",padding:"15px",fontSize:15,boxShadow:"0 4px 16px rgba(139,115,85,.25)",marginBottom:10}}>
+            {latestResult?"🔄 새로 진단하기":"🎯 역량 진단 시작"}
+          </button>
+          {latestResult&&<button onClick={()=>setTab("result")} style={{...S.outBtn,width:"100%",textAlign:"center"}}>📊 최근 결과 보기 ({fmtDate(latestResult.date)})</button>}
+        </div>
+      )}
+
+      {/* RESULT */}
+      {tab==="result" && (
+        <div style={{...S.page,maxWidth:560}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14}}>
+            <button onClick={()=>setTab("home")} style={{...S.outBtn,padding:"7px 14px"}}>← 홈</button>
+            <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:17,fontWeight:700,flex:1}}>역량 진단 결과</h2>
+          </div>
+          {!resultScores ? (
+            <div style={{...S.card,textAlign:"center",padding:"40px",color:"#8a7260"}}><p>아직 진단 결과가 없어요</p><button onClick={()=>setQuiz({active:true,answers:{},domainIdx:0})} style={{...S.btn(),marginTop:12}}>진단 시작</button></div>
+          ) : (
+            <>
+              <div style={{textAlign:"center",fontSize:12,color:"#8a7260",marginBottom:10}}>📅 {fmtDate(latestResult.date)} · <strong>{myData.nickname}</strong></div>
+              <CharBadge user={myData} compact/>
+              <div style={{...S.card,display:"flex",justifyContent:"center",marginTop:10}}><RadarChart scores={resultScores}/></div>
+              <div style={{marginTop:10}}>
+                {[...resultScores].sort((a,b)=>(b.score??-1)-(a.score??-1)).map(d=>{
+                  const lv=getLevel(d.score);
+                  return (
+                    <div key={d.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                      <span style={{fontSize:14,width:20,flexShrink:0}}>{d.emoji}</span>
+                      <div style={{flex:1}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:12,fontWeight:600}}>{d.name}</span><span style={{fontSize:11,color:lv.color,fontWeight:700}}>{d.score!==null?d.score+"점":"-"} · {lv.label}</span></div>
+                        <div style={{height:5,background:"#f0e8de",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",width:`${d.score||0}%`,background:d.color,borderRadius:3}}/></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {(()=>{
+                const sorted=[...resultScores].filter(d=>d.score!==null).sort((a,b)=>b.score-a.score);
+                if(!sorted.length)return null;
+                return (
+                  <div style={{display:"flex",gap:8,marginTop:12}}>
+                    <div style={{flex:1,background:"#f0faf4",borderRadius:12,padding:"12px",border:"1px solid #c8e6d4"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#4a8a5a",marginBottom:6}}>💪 강점 TOP 3</div>
+                      {sorted.slice(0,3).map(d=><div key={d.id} style={{fontSize:11,color:"#3a5a42",marginBottom:2}}>{d.emoji} {d.name} ({d.score}점)</div>)}
+                    </div>
+                    <div style={{flex:1,background:"#fff8f0",borderRadius:12,padding:"12px",border:"1px solid #f0d8b8"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#b87040",marginBottom:6}}>🔥 집중 필요</div>
+                      {sorted.slice(-3).reverse().map(d=><div key={d.id} style={{fontSize:11,color:"#7a5030",marginBottom:2}}>{d.emoji} {d.name} ({d.score}점)</div>)}
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+          <button onClick={()=>setQuiz({active:true,answers:{},domainIdx:0})} style={{...S.btn(),width:"100%",marginTop:12}}>다시 진단하기</button>
+        </div>
+      )}
+
+      {/* TODOS */}
+      {tab==="todos" && (
+        <div style={S.page}>
+          <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700,marginBottom:14}}>✅ 실천 투두리스트</h2>
+          <div style={{display:"flex",background:"#e8ddd0",borderRadius:12,padding:4,marginBottom:12}}>
+            <button onClick={()=>setTodoSel(p=>({...p,type:"daily"}))} style={{...S.tabBtn(todoSel.type==="daily"),borderRadius:9}}>📅 매일</button>
+            <button onClick={()=>setTodoSel(p=>({...p,type:"weekly"}))} style={{...S.tabBtn(todoSel.type==="weekly"),borderRadius:9}}>📆 매주</button>
+          </div>
+          <div style={{display:"flex",gap:5,overflowX:"auto",marginBottom:12,paddingBottom:4}}>
+            {DOMAINS.map(d=>{ const items=d.todos[todoSel.type]; const done=items.filter((_,i)=>todoChecked(d.id,todoSel.type,i)).length; return <button key={d.id} onClick={()=>setTodoSel(p=>({...p,domain:d.id}))} style={{flexShrink:0,background:todoSel.domain===d.id?d.color:"white",color:todoSel.domain===d.id?"white":"#5a4a38",border:`1.5px solid ${todoSel.domain===d.id?d.color:"#ddd"}`,borderRadius:18,padding:"4px 10px",fontSize:11,cursor:"pointer",fontWeight:todoSel.domain===d.id?700:400}}>{d.emoji} {done}/{items.length}</button>; })}
+          </div>
+          {(()=>{
+            const d=DOMAINS.find(x=>x.id===todoSel.domain);
+            const items=d.todos[todoSel.type];
+            const done=items.filter((_,i)=>todoChecked(d.id,todoSel.type,i)).length;
+            return (
+              <div style={{...S.card,borderTop:`4px solid ${d.color}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div><span style={{fontSize:20}}>{d.emoji}</span><span style={{fontFamily:"'Noto Serif KR',serif",fontSize:14,fontWeight:700,marginLeft:8}}>{d.name}</span></div>
+                  <span style={{fontSize:12,color:d.color,fontWeight:700}}>{done}/{items.length}</span>
+                </div>
+                <div style={{height:4,background:"#f0e8de",borderRadius:2,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:`${items.length?done/items.length*100:0}%`,background:d.color,borderRadius:2,transition:"width .3s"}}/></div>
+                {items.map((item,idx)=>{
+                  const checked=todoChecked(d.id,todoSel.type,idx);
+                  return (
+                    <div key={idx} onClick={()=>toggleTodo(d.id,todoSel.type,idx)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",borderBottom:idx<items.length-1?"1px solid #f0e8de":"none",cursor:"pointer",userSelect:"none"}}>
+                      <div style={{width:20,height:20,borderRadius:6,border:`2px solid ${checked?d.color:"#d0c8be"}`,background:checked?d.color:"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1,transition:"all .15s"}}>
+                        {checked&&<span style={{color:"white",fontSize:11,lineHeight:1}}>✓</span>}
+                      </div>
+                      <span style={{fontSize:13,lineHeight:1.6,color:checked?"#bbb":"#3a2e22",textDecoration:checked?"line-through":"none"}}>{item}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          <div style={{...S.card,background:"#f0faf8",border:"1px solid #c0e0d8",marginTop:4}}>
+            <div style={{fontSize:12,color:"#4a8a7a",fontWeight:700,marginBottom:4}}>💡 XP 획득</div>
+            <div style={{fontSize:11,color:"#5a7a72"}}>투두 완료 +1 XP · 점검 완료 +2 XP · 20XP마다 레벨업!</div>
+          </div>
+        </div>
+      )}
+
+      {/* CHECKIN */}
+      {tab==="checkin" && (
+        <div style={S.page}>
+          <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700,marginBottom:14}}>📋 자기 점검</h2>
+          <div style={{display:"flex",background:"#e8ddd0",borderRadius:12,padding:4,marginBottom:14}}>
+            <button onClick={()=>setCheckin(p=>({...p,type:"daily"}))} style={{...S.tabBtn(checkin.type==="daily"),borderRadius:9}}>📅 오늘</button>
+            <button onClick={()=>setCheckin(p=>({...p,type:"weekly"}))} style={{...S.tabBtn(checkin.type==="weekly"),borderRadius:9}}>📆 이번 주</button>
+          </div>
+          {CHECKIN_ITEMS[checkin.type].map(item=>{
+            const d=DOMAINS.find(x=>x.id===item.domain)||DOMAINS[0];
+            const val=checkin.answers[item.id];
+            return (
+              <div key={item.id} style={{...S.card,padding:"12px 14px"}}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:8}}><span style={{fontSize:14,flexShrink:0}}>{d.emoji}</span><p style={{fontSize:13,lineHeight:1.6,margin:0}}>{item.text}</p></div>
+                <div style={{display:"flex",gap:5}}>
+                  {["❌","△","✅"].map((label,i)=>(
+                    <button key={i} onClick={()=>setCheckin(p=>({...p,answers:{...p.answers,[item.id]:i}}))} style={{flex:1,padding:"8px 0",borderRadius:8,border:val===i?`2px solid ${d.color}`:"1.5px solid #e0d5c8",background:val===i?`${d.color}20`:"white",cursor:"pointer",fontSize:16}}>{label}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div style={S.card}>
+            <p style={{fontSize:13,fontWeight:600,marginBottom:8}}>💬 한 줄 소감</p>
+            <textarea value={checkin.note} onChange={e=>setCheckin(p=>({...p,note:e.target.value}))} placeholder="오늘 나에게 한 마디..." rows={2} style={{width:"100%",border:"1.5px solid #e0d5c8",borderRadius:10,padding:"10px 12px",fontSize:13,resize:"none",outline:"none"}}/>
+          </div>
+          <button onClick={submitCheckin} style={{...S.btn(),width:"100%",padding:"14px",marginTop:4}}>점검 완료 +2 XP ✅</button>
+          {myData?.checkins?.length>0&&(
+            <div style={{marginTop:14}}>
+              <p style={{fontSize:13,fontWeight:700,marginBottom:8}}>최근 점검</p>
+              {[...myData.checkins].reverse().slice(0,3).map(c=>{ const done=Object.values(c.answers||{}).filter(v=>v===2).length; const tot=Object.keys(c.answers||{}).length; return <div key={c.id} style={{...S.card,padding:"10px 14px",display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:12}}>{c.type==="daily"?"📅":"📆"} {fmtDate(c.date)}{c.note?` · "${c.note.slice(0,14)}..."`:""}</span><span style={{fontSize:12,color:"#8B7355",fontWeight:700}}>{done}/{tot} ✅</span></div>; })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TEAM */}
+      {tab==="team" && !teamMember && (
+        <div style={S.page}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700}}>👥 우리 팀</h2>
+            <button onClick={loadAll} style={{...S.outBtn,fontSize:11,padding:"6px 12px"}}>🔄 새로고침</button>
+          </div>
+          {teammates.length===0&&<div style={{...S.card,textAlign:"center",padding:"40px 20px",color:"#8a7260"}}><div style={{fontSize:36,marginBottom:10}}>👥</div><p>팀원이 같은 앱에서 계정을 만들면 자동으로 나타나요!</p></div>}
+          {teammates.map(u=>{
+            const char=CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
+            const lv=xpToLevel(u.xp||0);
+            const uResult=u.history?.slice(-1)[0]||null;
+            const uScores=uResult?DOMAINS.map(d=>({...d,score:calcScore(d,uResult.answers)})):null;
+            return (
+              <div key={u.id} style={S.card}>
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+                  <span style={{fontSize:34}}>{char.stages[levelToStage(lv)]}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:"'Noto Serif KR',serif",fontSize:14,fontWeight:700}}>{u.nickname}</div>
+                    <div style={{fontSize:11,color:"#8a7260"}}>Lv.{lv} {char.name} · {u.xp||0} XP</div>
+                    <div style={{height:4,background:"#f0e8de",borderRadius:2,marginTop:5,overflow:"hidden"}}><div style={{height:"100%",width:`${((u.xp||0)%20)/20*100}%`,background:char.color,borderRadius:2}}/></div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <button onClick={()=>pokeMember(u.id)} style={{...S.btn("#E07A5F"),fontSize:11,padding:"7px 10px"}}>🫵 콕!</button>
+                    <button onClick={()=>setTeamMember(u.id)} style={{...S.outBtn,fontSize:11,padding:"6px 10px"}}>결과보기</button>
+                  </div>
+                </div>
+                {uScores&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{uScores.map(d=>{const lv2=getLevel(d.score);return <span key={d.id} style={{background:`${lv2.color}18`,borderRadius:6,padding:"3px 7px",fontSize:10,color:lv2.color,fontWeight:600}}>{d.emoji}{d.score!==null?d.score:"?"}</span>;})}</div>}
+                {!uScores&&<div style={{fontSize:11,color:"#aaa"}}>아직 진단 결과 없음</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tab==="team" && teamMember && (()=>{
+        const u=allUsers.find(x=>x.id===teamMember);
+        if(!u) return <div style={S.page}><button onClick={()=>setTeamMember(null)} style={S.outBtn}>← 팀</button></div>;
+        const char=CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
+        const lv=xpToLevel(u.xp||0);
+        const uResult=u.history?.slice(-1)[0]||null;
+        const uScores=uResult?DOMAINS.map(d=>({...d,score:calcScore(d,uResult.answers)})):null;
+        return (
+          <div style={{...S.page,maxWidth:560}}>
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14}}>
+              <button onClick={()=>setTeamMember(null)} style={{...S.outBtn,padding:"7px 14px"}}>← 팀</button>
+              <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:16,fontWeight:700,flex:1}}>{u.nickname}의 현황</h2>
+              <button onClick={()=>pokeMember(u.id)} style={{...S.btn("#E07A5F"),fontSize:12,padding:"8px 12px"}}>🫵 콕!</button>
+            </div>
+            <div style={{...S.card,textAlign:"center"}}><div style={{fontSize:48,lineHeight:1,marginBottom:6}}>{char.stages[levelToStage(lv)]}</div><div style={{fontFamily:"'Noto Serif KR',serif",fontSize:15,fontWeight:700,color:char.color}}>{u.nickname}</div><div style={{fontSize:12,color:"#8a7260"}}>Lv.{lv} {char.name} · {u.xp||0} XP</div></div>
+            {uScores ? <>
+              <div style={{fontSize:12,color:"#8a7260",textAlign:"center",marginBottom:8}}>📅 {fmtDate(uResult.date)} 진단</div>
+              <div style={{...S.card,display:"flex",justifyContent:"center"}}><RadarChart scores={uScores}/></div>
+              <div style={{marginTop:8}}>{[...uScores].sort((a,b)=>(b.score??-1)-(a.score??-1)).map(d=>{ const lv2=getLevel(d.score); return <div key={d.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:13,width:20}}>{d.emoji}</span><div style={{flex:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,fontWeight:600}}>{d.name}</span><span style={{fontSize:11,color:lv2.color,fontWeight:700}}>{d.score!==null?d.score+"점":"-"} · {lv2.label}</span></div><div style={{height:4,background:"#f0e8de",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${d.score||0}%`,background:d.color,borderRadius:2}}/></div></div></div>; })}</div>
+            </> : <div style={{...S.card,textAlign:"center",color:"#8a7260",padding:"30px"}}>아직 진단 결과가 없어요</div>}
+          </div>
+        );
+      })()}
+
+      {/* HISTORY */}
+      {tab==="history" && (
+        <div style={S.page}>
+          <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700,marginBottom:14}}>📈 진단 기록</h2>
+          {(!myData?.history||myData.history.length===0)&&<div style={{...S.card,textAlign:"center",padding:"50px 20px",color:"#8a7260"}}><div style={{fontSize:36,marginBottom:10}}>📊</div><p>아직 진단 기록이 없어요</p><button onClick={()=>setQuiz({active:true,answers:{},domainIdx:0})} style={{...S.btn(),marginTop:12}}>진단 시작</button></div>}
+          {myData?.history?.length>=2&&(
+            <div style={{...S.card,marginBottom:12}}>
+              <p style={{fontSize:12,fontWeight:700,marginBottom:10,color:"#5a4a38"}}>📈 영역별 변화 추이</p>
+              {DOMAINS.map(d=>{ const recent=myData.history.slice(-4); const scores=recent.map(h=>calcScore(d,h.answers)); const last=scores[scores.length-1],prev=scores[scores.length-2]; const delta=last!==null&&prev!==null?last-prev:null; return <div key={d.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}><span style={{fontSize:12,width:18}}>{d.emoji}</span><span style={{fontSize:10,width:60,color:"#5a4a38",overflow:"hidden",whiteSpace:"nowrap"}}>{d.name}</span><div style={{flex:1,height:4,background:"#f0e8de",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${last||0}%`,background:d.color,borderRadius:2}}/></div><span style={{fontSize:11,width:28,textAlign:"right",fontWeight:700}}>{last??"-"}</span><span style={{fontSize:10,width:28,textAlign:"right",color:delta>0?"#6BA89A":delta<0?"#C0706A":"#aaa",fontWeight:600}}>{delta!==null?(delta>0?`+${delta}`:delta<0?`${delta}`:"–"):"–"}</span></div>; })}
+            </div>
+          )}
+          {[...(myData?.history||[])].reverse().map((h,i)=>{ const scores=DOMAINS.map(d=>({...d,score:calcScore(d,h.answers)})); const valid=scores.filter(d=>d.score!==null); const avg=valid.length?Math.round(valid.reduce((s,d)=>s+d.score,0)/valid.length):0; return <div key={h.id} style={S.card}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,fontWeight:700}}>📅 {fmtDate(h.date)}{i===0?<span style={{fontSize:10,color:"#8B7355",marginLeft:4}}>최근</span>:""}</span><span style={{fontSize:13,fontWeight:700,color:"#8B7355"}}>평균 {avg}점</span></div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{scores.map(d=>{const lv=getLevel(d.score);return <span key={d.id} style={{background:`${lv.color}18`,borderRadius:6,padding:"3px 7px",fontSize:10,color:lv.color,fontWeight:600}}>{d.emoji}{d.score!==null?d.score:"?"}</span>;})}</div></div>; })}
+        </div>
+      )}
+
+      {/* BOTTOM NAV */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(245,237,224,.96)",backdropFilter:"blur(8px)",borderTop:"1px solid #e0d5c8",display:"flex",padding:"8px 16px 12px"}}>
+        {NAV.map(n=>(
+          <button key={n.id} onClick={()=>{setTeamMember(null);setTab(n.id);}} style={{flex:1,padding:"8px 0",borderRadius:10,border:"none",background:tab===n.id?"#8B7355":"transparent",color:tab===n.id?"white":"#8a7260",fontSize:11,fontWeight:tab===n.id?700:400,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+            <span style={{fontSize:18}}>{n.e}</span><span style={{fontSize:10}}>{n.l}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
