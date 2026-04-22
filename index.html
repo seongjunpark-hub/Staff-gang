@@ -17,17 +17,49 @@
     #root { min-height: 100vh; }
     input, textarea, button { font-family: 'Noto Sans KR', sans-serif; }
     ::-webkit-scrollbar { display: none; }
+
+    /* 카카오 로그인 버튼 */
+    .kakao-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 14px 20px;
+      background: #FEE500;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #3A1D1D;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(254,229,0,.4);
+      transition: transform .15s, box-shadow .15s;
+    }
+    .kakao-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(254,229,0,.5); }
+    .kakao-btn:active { transform: translateY(0); }
+    .kakao-btn svg { width: 22px; height: 22px; flex-shrink: 0; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 
+<!-- 카카오 SDK -->
+<script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
+
+// ═══════════════════════════════════════════
+// 카카오 SDK 초기화
+// ═══════════════════════════════════════════
+const KAKAO_JS_KEY = "020b4c9ab70275412bdc1f47c15fdd46";
+if (window.Kakao && !window.Kakao.isInitialized()) {
+  window.Kakao.init(KAKAO_JS_KEY);
+}
 
 // ═══════════════════════════════════════════
 // SUPABASE
@@ -42,7 +74,7 @@ async function sbGetUser(id) {
     const d = await r.json();
     if (!d?.length) return null;
     const u = d[0];
-    return { id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} };
+    return { id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, todoHistory:u.todo_history||[], history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} };
   } catch { return null; }
 }
 async function sbGetAllUsers() {
@@ -50,7 +82,7 @@ async function sbGetAllUsers() {
     const r = await fetch(`${SB_URL}/rest/v1/users?order=updated_at.desc`, { headers: SBH });
     const d = await r.json();
     if (!Array.isArray(d)) return [];
-    return d.map(u => ({ id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} }));
+    return d.map(u => ({ id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, todoHistory:u.todo_history||[], history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} }));
   } catch { return []; }
 }
 async function sbSaveUser(user) {
@@ -58,11 +90,10 @@ async function sbSaveUser(user) {
     await fetch(`${SB_URL}/rest/v1/users`, {
       method:"POST",
       headers:{ ...SBH, "Prefer":"resolution=merge-duplicates,return=minimal" },
-      body:JSON.stringify({ id:user.id, nickname:user.nickname, character:user.character, xp:user.xp||0, todos:user.todos||{}, history:user.history||[], checkins:user.checkins||[], pokes:user.pokes||[], promo_cleared:user.promoCleared||{}, updated_at:new Date().toISOString() })
+      body:JSON.stringify({ id:user.id, nickname:user.nickname, character:user.character, xp:user.xp||0, todos:user.todos||{}, todo_history:user.todoHistory||[], history:user.history||[], checkins:user.checkins||[], pokes:user.pokes||[], promo_cleared:user.promoCleared||{}, updated_at:new Date().toISOString() })
     });
   } catch {}
 }
-
 
 // ═══════════════════════════════════════════
 // DATA
@@ -85,7 +116,6 @@ function xpToLevel(xp) { return Math.min(100, Math.floor((xp||0)/20)+1); }
 function levelToStage(lv) { return Math.min(9, Math.floor((lv-1)/10)); }
 function isPromoLevel(lv) { return lv%10===0&&lv>0; }
 
-// SVG 캐릭터 렌더러 - 각 캐릭터 10단계
 const CHAR_SVGS = {
   sprout:[
     `<ellipse cx="40" cy="56" rx="12" ry="14" fill="#C8A06B"/><ellipse cx="40" cy="56" rx="8" ry="10" fill="#D4B07A" opacity=".6"/><line x1="40" y1="42" x2="40" y2="34" stroke="#8FAF7E" stroke-width="2" stroke-linecap="round"/><ellipse cx="40" cy="31" rx="4" ry="3" fill="#B8D898"/>`,
@@ -170,6 +200,7 @@ function CharSVG({ charId, stage, size=80 }) {
     dangerouslySetInnerHTML:{ __html: inner }
   });
 }
+
 const PROMO_MISSIONS = {
   10:"이번 주 경건의 시간 5회 완수하기", 20:"후원자 1명에게 손편지 쓰기",
   30:"전도 대상자 3명 정하고 기도 시작하기", 40:"팀원 전체에게 격려 메시지 보내기",
@@ -177,6 +208,7 @@ const PROMO_MISSIONS = {
   70:"새로운 캠퍼스 전도 전략 1가지 실행하기", 80:"파송할 학생 리더 1명 선정하고 준비시키기",
   90:"간사 사역 경험 나눔 세션 팀 앞에서 하기", 100:"🎉 100레벨! 팀 전체 감사예배 인도하기",
 };
+
 const DOMAINS = [
   { id:"devotion", name:"하나님과의 관계", emoji:"✝️", color:"#C8956C", sub:"경건의 시간",
     questions:[{id:"d1",text:"경건의 시간을 주 5회 이상 규칙적으로 갖고 있다."},{id:"d2",text:"QT 후 묵상 내용을 기록하거나 삶에 적용하고 있다."},{id:"d3",text:"기도 제목을 목록으로 관리하고 꾸준히 기도하고 있다."},{id:"d4",text:"하나님과의 관계에서 현재 영적 활력을 느끼고 있다."},{id:"d5",text:"말씀을 통해 하나님의 음성을 듣고 순종하려 노력하고 있다."}],
@@ -215,6 +247,7 @@ const DOMAINS = [
     questions:[{id:"ch1",text:"교회 사역을 기쁨으로 감당하고 있다."},{id:"ch2",text:"교회 사역과 CCC 사역 사이에 균형을 유지하고 있다."},{id:"ch3",text:"교회 사역에서 내 역할과 경계를 명확히 알고 있다."},{id:"ch4",text:"교회 공동체 안에서 영적으로 공급받고 있다."},{id:"ch5",text:"담당 교역자 또는 팀원과 소통이 원활하고 협력이 잘 된다."}],
     todos:{ daily:["담당 청년/청소년 1명 위해 기도하기","찬양팀 악보/연습 준비하기"], weekly:["교회 사역 담당자와 소통 확인","CCC-교회 시간 배분 점검","청년부/청소년 모임 준비 및 참여","교회 예배에 온전히 참여하기"] }},
 ];
+
 const CHECKIN_ITEMS = {
   daily:[
     {id:"ci_d1",domain:"devotion",text:"오늘 경건의 시간을 가졌다."},
@@ -259,6 +292,21 @@ function getLevel(score) {
 function fmtDate(iso) { if(!iso)return""; const d=new Date(iso); return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`; }
 function getUid() { try { return localStorage.getItem("ccc_uid"); } catch { return null; } }
 function setUid(id) { try { localStorage.setItem("ccc_uid", id); } catch {} }
+
+// 날짜 키 헬퍼
+function getTodayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function getWeekKey() {
+  const d = new Date();
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const week = Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
+  return `${d.getFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+function getDateKey(type) { return type === "daily" ? getTodayKey() : getWeekKey(); }
+// todos 구조: { "devotion_daily_0_2025-04-22": true, ... }
+// todoHistory 구조: [ { date, type, dateKey, domainId, idx, itemText, done:true } ]
 
 // ═══════════════════════════════════════════
 // RADAR CHART
@@ -327,6 +375,200 @@ function CharBadge({ user, compact }) {
 }
 
 // ═══════════════════════════════════════════
+// 카카오 로그인 화면
+// ═══════════════════════════════════════════
+function KakaoLoginScreen({ onLogin }) {
+  const [step, setStep] = useState("main"); // "main" | "setup"
+  const [kakaoId, setKakaoId] = useState(null);
+  const [nickname, setNickname] = useState("");
+  const [character, setCharacter] = useState("sprout");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleKakaoLogin = () => {
+    if (!window.Kakao || !window.Kakao.isInitialized()) {
+      setError("카카오 SDK 초기화 오류. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    window.Kakao.Auth.login({
+      success: async (authObj) => {
+        try {
+          // 카카오 사용자 정보 가져오기
+          window.Kakao.API.request({
+            url: "/v2/user/me",
+            success: async (res) => {
+              const kid = `kakao_${res.id}`;
+              // Supabase에서 기존 사용자 확인
+              const existing = await sbGetUser(kid);
+              if (existing) {
+                setUid(kid);
+                onLogin(existing);
+              } else {
+                // 신규 유저 → 닉네임/캐릭터 설정 단계
+                setKakaoId(kid);
+                setStep("setup");
+              }
+              setLoading(false);
+            },
+            fail: (err) => {
+              console.error("Kakao API 오류:", err);
+              setError("카카오 정보를 가져오지 못했어요.");
+              setLoading(false);
+            }
+          });
+        } catch (e) {
+          setError("로그인 처리 중 오류가 발생했어요.");
+          setLoading(false);
+        }
+      },
+      fail: (err) => {
+        console.error("Kakao 로그인 실패:", err);
+        setError("카카오 로그인에 실패했어요. 다시 시도해 주세요.");
+        setLoading(false);
+      }
+    });
+  };
+
+  const handleSetup = async () => {
+    if (!nickname.trim()) return;
+    setLoading(true);
+    const user = {
+      id: kakaoId,
+      nickname: nickname.trim(),
+      character,
+      xp: 0,
+      todos: {},
+      history: [],
+      checkins: [],
+      pokes: [],
+      promoCleared: {}
+    };
+    await sbSaveUser(user);
+    setUid(kakaoId);
+    onLogin(user);
+    setLoading(false);
+  };
+
+  const S = {
+    card: { background:"white", borderRadius:20, padding:"28px 24px", boxShadow:"0 2px 20px rgba(139,115,85,.12)" },
+    input: { width:"100%", border:"1.5px solid #e0d5c8", borderRadius:10, padding:"12px 14px", fontSize:14, outline:"none", marginTop:6 },
+    btn: (bg="#8B7355") => ({ background:bg, color:"white", border:"none", borderRadius:10, padding:"13px 20px", fontSize:14, fontWeight:700, cursor:"pointer", width:"100%" }),
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 20px"}}>
+      <div style={{maxWidth:400,width:"100%"}}>
+
+        {/* 헤더 */}
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontSize:52,marginBottom:10}}>✝️</div>
+          <h1 style={{fontFamily:"'Noto Serif KR',serif",fontSize:24,fontWeight:700,marginBottom:6}}>CCC 간사 자기관리</h1>
+          <p style={{fontSize:13,color:"#8a7260",lineHeight:1.7}}>팀과 함께 성장하는 사역 관리 앱</p>
+        </div>
+
+        {/* STEP 1: 카카오 로그인 */}
+        {step === "main" && (
+          <div style={S.card}>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <p style={{fontSize:15,fontWeight:700,marginBottom:6}}>카카오로 시작하기</p>
+              <p style={{fontSize:12,color:"#8a7260",lineHeight:1.7}}>카카오 계정으로 로그인하면<br/>팀원과 함께 데이터를 공유할 수 있어요</p>
+            </div>
+
+            {error && (
+              <div style={{background:"#fff0f0",border:"1px solid #f0c0c0",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#c05050",marginBottom:16,textAlign:"center"}}>
+                {error}
+              </div>
+            )}
+
+            <button className="kakao-btn" onClick={handleKakaoLogin} disabled={loading}>
+              {loading ? (
+                <span>로그인 중...</span>
+              ) : (
+                <>
+                  {/* 카카오 로고 SVG */}
+                  <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path fillRule="evenodd" clipRule="evenodd" d="M9 0.5C4.306 0.5 0.5 3.534 0.5 7.283c0 2.407 1.538 4.52 3.873 5.727l-.988 3.685c-.088.327.284.59.574.394l4.32-2.877c.238.016.48.024.721.024 4.694 0 8.5-3.034 8.5-6.783C17.5 3.534 13.694.5 9 .5z" fill="#3A1D1D"/>
+                  </svg>
+                  카카오로 시작하기
+                </>
+              )}
+            </button>
+
+            <div style={{marginTop:20,padding:"14px",background:"#faf8f5",borderRadius:12,border:"1px solid #e8e0d8"}}>
+              <p style={{fontSize:11,color:"#8a7260",lineHeight:1.8,textAlign:"center"}}>
+                🔒 카카오 프로필 정보는 수집하지 않아요<br/>
+                로그인 식별을 위해 카카오 ID만 사용해요
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 2: 닉네임 & 캐릭터 설정 */}
+        {step === "setup" && (
+          <div style={S.card}>
+            <div style={{textAlign:"center",marginBottom:20}}>
+              <div style={{fontSize:32,marginBottom:6}}>🌱</div>
+              <p style={{fontSize:16,fontWeight:700,fontFamily:"'Noto Serif KR',serif",marginBottom:4}}>처음 오셨군요!</p>
+              <p style={{fontSize:12,color:"#8a7260"}}>닉네임과 캐릭터를 설정해 주세요</p>
+            </div>
+
+            <div style={{marginBottom:18}}>
+              <label style={{fontSize:12,fontWeight:700,color:"#5a4a38"}}>닉네임</label>
+              <input
+                value={nickname}
+                onChange={e => setNickname(e.target.value)}
+                placeholder="예: 박간사, 믿음이, 소망 간사"
+                style={S.input}
+                maxLength={12}
+                autoFocus
+              />
+              <div style={{fontSize:10,color:"#bbb",marginTop:4,textAlign:"right"}}>{nickname.length}/12</div>
+            </div>
+
+            <div style={{marginBottom:24}}>
+              <label style={{fontSize:12,fontWeight:700,color:"#5a4a38",display:"block",marginBottom:10}}>나의 캐릭터</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {CHARACTERS.map(c => (
+                  <div
+                    key={c.id}
+                    onClick={() => setCharacter(c.id)}
+                    style={{
+                      border:`2px solid ${character===c.id ? c.color : "#e0d5c8"}`,
+                      borderRadius:14,
+                      padding:"10px 6px",
+                      textAlign:"center",
+                      cursor:"pointer",
+                      background: character===c.id ? `${c.color}18` : "white",
+                      transition:"all .15s"
+                    }}
+                  >
+                    <div style={{display:"flex",justifyContent:"center"}}>
+                      <CharSVG charId={c.id} stage={0} size={44}/>
+                    </div>
+                    <div style={{fontSize:11,fontWeight:700,color:c.color,marginTop:4}}>{c.name}</div>
+                    <div style={{fontSize:9,color:"#aaa",marginTop:2,lineHeight:1.3}}>{c.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={handleSetup}
+              disabled={!nickname.trim() || loading}
+              style={{...S.btn(), opacity: nickname.trim() && !loading ? 1 : 0.5, cursor: nickname.trim() && !loading ? "pointer" : "not-allowed"}}
+            >
+              {loading ? "저장 중..." : "사역 시작하기 🌱"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════
 function App() {
@@ -335,8 +577,6 @@ function App() {
   const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("home");
-  const [loginStep, setLoginStep] = useState("choose");
-  const [regForm, setRegForm] = useState({ nickname:"", character:"sprout" });
   const [quiz, setQuiz] = useState({ active:false, answers:{}, domainIdx:0 });
   const [todoSel, setTodoSel] = useState({ domain:"devotion", type:"daily" });
   const [checkin, setCheckin] = useState({ type:"daily", answers:{}, note:"" });
@@ -352,12 +592,36 @@ function App() {
     (async () => {
       await loadAll();
       const savedId = getUid();
-      if (savedId) { const d = await sbGetUser(savedId); if (d) { setMyId(savedId); setMyData(d); } }
+      if (savedId) {
+        const d = await sbGetUser(savedId);
+        if (d) { setMyId(savedId); setMyData(d); }
+      }
       setLoading(false);
     })();
   }, []);
 
   useEffect(() => { const iv = setInterval(loadAll, 15000); return () => clearInterval(iv); }, [loadAll]);
+
+  const handleKakaoLoginSuccess = useCallback((userData) => {
+    setMyId(userData.id);
+    setMyData(userData);
+    setAllUsers(prev => {
+      const others = prev.filter(u => u.id !== userData.id);
+      return [...others, userData];
+    });
+    setTab("home");
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    // 카카오 로그아웃
+    if (window.Kakao && window.Kakao.Auth && window.Kakao.Auth.getAccessToken()) {
+      window.Kakao.Auth.logout(() => {});
+    }
+    setMyId(null);
+    setMyData(null);
+    setUid("");
+    setTab("home");
+  }, []);
 
   const saveMe = useCallback(async (data) => {
     setMyData(data);
@@ -377,23 +641,6 @@ function App() {
     return updated;
   }, []);
 
-  const handleRegister = async () => {
-    if (!regForm.nickname.trim()) return;
-    const id = `u${Date.now()}`;
-    const user = { id, nickname:regForm.nickname.trim(), character:regForm.character, xp:0, todos:{}, history:[], checkins:[], pokes:[], promoCleared:{} };
-    await sbSaveUser(user);
-    setUid(id); setMyId(id); setMyData(user);
-    setAllUsers(prev => [...prev, user]);
-    setTab("home");
-  };
-
-  const handleLogin = async (uid) => {
-    const d = await sbGetUser(uid);
-    if (d) { setUid(uid); setMyId(uid); setMyData(d); setTab("home"); }
-  };
-
-
-
   const finishQuiz = async () => {
     const entry = { id:Date.now(), date:new Date().toISOString(), answers:{...quiz.answers} };
     const updated = { ...myData, history:[...(myData.history||[]), entry] };
@@ -404,10 +651,26 @@ function App() {
 
   const toggleTodo = useCallback(async (domainId, type, idx) => {
     if (!myData) return;
-    const key = `${domainId}_${type}_${idx}`;
+    const dateKey = getDateKey(type);
+    const key = `${domainId}_${type}_${idx}_${dateKey}`;
     const wasDone = !!(myData.todos||{})[key];
     const newTodos = { ...(myData.todos||{}), [key]: !wasDone };
-    const updated = { ...myData, todos: newTodos };
+
+    // todoHistory에 기록 추가/제거
+    const domain = DOMAINS.find(d => d.id === domainId);
+    const itemText = domain?.todos[type]?.[idx] || "";
+    let newHistory = [...(myData.todoHistory||[])];
+    if (!wasDone) {
+      // 완료 기록 추가
+      newHistory.push({ id:Date.now(), date:new Date().toISOString(), dateKey, type, domainId, idx, itemText });
+    } else {
+      // 완료 취소 시 해당 기록 제거
+      newHistory = newHistory.filter(h => !(h.dateKey===dateKey && h.domainId===domainId && h.type===type && h.idx===idx));
+    }
+    // 최근 500개만 유지
+    if (newHistory.length > 500) newHistory = newHistory.slice(-500);
+
+    const updated = { ...myData, todos: newTodos, todoHistory: newHistory };
     if (!wasDone) {
       await addXP(updated, 1);
     } else {
@@ -415,7 +678,10 @@ function App() {
     }
   }, [myData, saveMe, addXP]);
 
-  const todoChecked = (domainId, type, idx) => !!(myData?.todos||{})[`${domainId}_${type}_${idx}`];
+  const todoChecked = (domainId, type, idx) => {
+    const dateKey = getDateKey(type);
+    return !!(myData?.todos||{})[`${domainId}_${type}_${idx}_${dateKey}`];
+  };
 
   const submitCheckin = async () => {
     if (!myData) return;
@@ -471,65 +737,8 @@ function App() {
     </div>
   );
 
-  // ── LOGIN
-  if (!myId) return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{maxWidth:400,width:"100%",padding:"32px 20px"}}>
-        <div style={{textAlign:"center",marginBottom:28}}>
-          <div style={{fontSize:44,marginBottom:8}}>✝️</div>
-          <h1 style={{fontFamily:"'Noto Serif KR',serif",fontSize:22,fontWeight:700,marginBottom:4}}>CCC 간사 자기관리</h1>
-          <p style={{fontSize:13,color:"#8a7260"}}>팀과 함께 성장하는 사역 관리 앱</p>
-        </div>
-        {loginStep==="choose" && <>
-          {allUsers.length>0 && (
-            <div style={{...S.card,marginBottom:16}}>
-              <p style={{fontSize:13,fontWeight:700,marginBottom:12}}>👋 기존 계정으로 로그인</p>
-              {allUsers.map(u => {
-                const char=CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
-                const lv=xpToLevel(u.xp||0);
-                return (
-                  <div key={u.id} onClick={()=>handleLogin(u.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #f0e8de",cursor:"pointer"}}>
-                    <span style={{fontSize:24}}>{char.stages[levelToStage(lv)]}</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:600}}>{u.nickname}</div>
-                      <div style={{fontSize:11,color:"#8a7260"}}>Lv.{lv} {char.name} · {u.xp||0} XP</div>
-                    </div>
-                    <span style={{fontSize:12,color:"#8B7355"}}>→</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <button onClick={()=>setLoginStep("register")} style={{...S.btn(),width:"100%",padding:"14px",fontSize:15}}>+ 새 계정 만들기</button>
-
-        </>}
-        {loginStep==="register" && (
-          <div style={S.card}>
-            <p style={{fontSize:15,fontWeight:700,marginBottom:16,fontFamily:"'Noto Serif KR',serif"}}>새 계정 만들기</p>
-            <div style={{marginBottom:14}}>
-              <label style={{fontSize:12,color:"#8a7260",display:"block",marginBottom:6}}>닉네임</label>
-              <input value={regForm.nickname} onChange={e=>setRegForm(p=>({...p,nickname:e.target.value}))} placeholder="예: 박간사, 믿음이" style={{width:"100%",border:"1.5px solid #e0d5c8",borderRadius:10,padding:"10px 12px",fontSize:14,outline:"none"}}/>
-            </div>
-            <div style={{marginBottom:18}}>
-              <label style={{fontSize:12,color:"#8a7260",display:"block",marginBottom:8}}>나의 캐릭터</label>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                {CHARACTERS.map(c=>(
-                  <div key={c.id} onClick={()=>setRegForm(p=>({...p,character:c.id}))} style={{border:`2px solid ${regForm.character===c.id?c.color:"#e0d5c8"}`,borderRadius:12,padding:"10px 6px",textAlign:"center",cursor:"pointer",background:regForm.character===c.id?`${c.color}18`:"white"}}>
-                    <div style={{display:"flex",justifyContent:"center"}}><CharSVG charId={c.id} stage={0} size={44}/></div>
-                    <div style={{fontSize:11,fontWeight:600,color:c.color,marginTop:4}}>{c.name}</div>
-                    <div style={{fontSize:9,color:"#aaa",marginTop:2}}>{c.desc}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <button onClick={handleRegister} disabled={!regForm.nickname.trim()} style={{...S.btn(),width:"100%",padding:"13px",opacity:regForm.nickname.trim()?1:.5}}>시작하기 🌱</button>
-            {allUsers.length>0 && <button onClick={()=>setLoginStep("choose")} style={{...S.outBtn,width:"100%",marginTop:8,textAlign:"center"}}>← 돌아가기</button>}
-
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  // ── 카카오 로그인 화면
+  if (!myId) return <KakaoLoginScreen onLogin={handleKakaoLoginSuccess}/>;
 
   // ── QUIZ
   if (quiz.active) return (
@@ -591,7 +800,7 @@ function App() {
         <div style={S.page}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
             <CharBadge user={myData} compact/>
-            <button onClick={()=>{setMyId(null);setMyData(null);setUid("");}} style={{...S.outBtn,fontSize:11,padding:"6px 12px"}}>로그아웃</button>
+            <button onClick={handleLogout} style={{...S.outBtn,fontSize:11,padding:"6px 12px"}}>로그아웃</button>
           </div>
           <CharBadge user={myData}/>
           {myData?.pokes?.length>0 && (
@@ -674,12 +883,17 @@ function App() {
             const d=DOMAINS.find(x=>x.id===todoSel.domain);
             const items=d.todos[todoSel.type];
             const done=items.filter((_,i)=>todoChecked(d.id,todoSel.type,i)).length;
+            const dateKey = getDateKey(todoSel.type);
+            const dateLabel = todoSel.type === "daily"
+              ? `오늘 (${getTodayKey()})`
+              : `이번 주 (${getWeekKey()})`;
             return (
               <div style={{...S.card,borderTop:`4px solid ${d.color}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                   <div><span style={{fontSize:20}}>{d.emoji}</span><span style={{fontFamily:"'Noto Serif KR',serif",fontSize:14,fontWeight:700,marginLeft:8}}>{d.name}</span></div>
                   <span style={{fontSize:12,color:d.color,fontWeight:700}}>{done}/{items.length}</span>
                 </div>
+                <div style={{fontSize:10,color:"#aaa",marginBottom:10}}>📅 {dateLabel} · 매일 자동 초기화</div>
                 <div style={{height:4,background:"#f0e8de",borderRadius:2,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:`${items.length?done/items.length*100:0}%`,background:d.color,borderRadius:2,transition:"width .3s"}}/></div>
                 {items.map((item,idx)=>{
                   const checked=todoChecked(d.id,todoSel.type,idx);
@@ -745,7 +959,7 @@ function App() {
             <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700}}>👥 우리 팀</h2>
             <button onClick={loadAll} style={{...S.outBtn,fontSize:11,padding:"6px 12px"}}>🔄 새로고침</button>
           </div>
-          {teammates.length===0&&<div style={{...S.card,textAlign:"center",padding:"40px 20px",color:"#8a7260"}}><div style={{fontSize:36,marginBottom:10}}>👥</div><p>팀원이 같은 앱에서 계정을 만들면 자동으로 나타나요!</p></div>}
+          {teammates.length===0&&<div style={{...S.card,textAlign:"center",padding:"40px 20px",color:"#8a7260"}}><div style={{fontSize:36,marginBottom:10}}>👥</div><p>팀원이 카카오로 로그인하면 자동으로 나타나요!</p></div>}
           {teammates.map(u=>{
             const char=CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
             const lv=xpToLevel(u.xp||0);
@@ -798,19 +1012,95 @@ function App() {
       })()}
 
       {/* HISTORY */}
-      {tab==="history" && (
+      {tab==="history" && (()=>{
+        const [historyTab, setHistoryTab] = useState("diagnosis");
+
+        // 투두 히스토리: 날짜별로 그룹핑
+        const todoHist = myData?.todoHistory || [];
+        const todoByDate = {};
+        todoHist.forEach(h => {
+          const dk = h.dateKey;
+          if (!todoByDate[dk]) todoByDate[dk] = { dateKey:dk, type:h.type, date:h.date, items:[] };
+          todoByDate[dk].items.push(h);
+        });
+        const todoDateGroups = Object.values(todoByDate).sort((a,b) => b.dateKey.localeCompare(a.dateKey)).slice(0, 30);
+
+        return (
         <div style={S.page}>
-          <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700,marginBottom:14}}>📈 진단 기록</h2>
-          {(!myData?.history||myData.history.length===0)&&<div style={{...S.card,textAlign:"center",padding:"50px 20px",color:"#8a7260"}}><div style={{fontSize:36,marginBottom:10}}>📊</div><p>아직 진단 기록이 없어요</p><button onClick={()=>setQuiz({active:true,answers:{},domainIdx:0})} style={{...S.btn(),marginTop:12}}>진단 시작</button></div>}
-          {myData?.history?.length>=2&&(
-            <div style={{...S.card,marginBottom:12}}>
-              <p style={{fontSize:12,fontWeight:700,marginBottom:10,color:"#5a4a38"}}>📈 영역별 변화 추이</p>
-              {DOMAINS.map(d=>{ const recent=myData.history.slice(-4); const scores=recent.map(h=>calcScore(d,h.answers)); const last=scores[scores.length-1],prev=scores[scores.length-2]; const delta=last!==null&&prev!==null?last-prev:null; return <div key={d.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}><span style={{fontSize:12,width:18}}>{d.emoji}</span><span style={{fontSize:10,width:60,color:"#5a4a38",overflow:"hidden",whiteSpace:"nowrap"}}>{d.name}</span><div style={{flex:1,height:4,background:"#f0e8de",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${last||0}%`,background:d.color,borderRadius:2}}/></div><span style={{fontSize:11,width:28,textAlign:"right",fontWeight:700}}>{last??"-"}</span><span style={{fontSize:10,width:28,textAlign:"right",color:delta>0?"#6BA89A":delta<0?"#C0706A":"#aaa",fontWeight:600}}>{delta!==null?(delta>0?`+${delta}`:delta<0?`${delta}`:"–"):"–"}</span></div>; })}
-            </div>
-          )}
-          {[...(myData?.history||[])].reverse().map((h,i)=>{ const scores=DOMAINS.map(d=>({...d,score:calcScore(d,h.answers)})); const valid=scores.filter(d=>d.score!==null); const avg=valid.length?Math.round(valid.reduce((s,d)=>s+d.score,0)/valid.length):0; return <div key={h.id} style={S.card}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,fontWeight:700}}>📅 {fmtDate(h.date)}{i===0?<span style={{fontSize:10,color:"#8B7355",marginLeft:4}}>최근</span>:""}</span><span style={{fontSize:13,fontWeight:700,color:"#8B7355"}}>평균 {avg}점</span></div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{scores.map(d=>{const lv=getLevel(d.score);return <span key={d.id} style={{background:`${lv.color}18`,borderRadius:6,padding:"3px 7px",fontSize:10,color:lv.color,fontWeight:600}}>{d.emoji}{d.score!==null?d.score:"?"}</span>;})}</div></div>; })}
+          <h2 style={{fontFamily:"'Noto Serif KR',serif",fontSize:18,fontWeight:700,marginBottom:14}}>📈 기록</h2>
+          <div style={{display:"flex",background:"#e8ddd0",borderRadius:12,padding:4,marginBottom:14}}>
+            <button onClick={()=>setHistoryTab("diagnosis")} style={{...S.tabBtn(historyTab==="diagnosis"),borderRadius:9}}>📊 역량진단</button>
+            <button onClick={()=>setHistoryTab("todos")} style={{...S.tabBtn(historyTab==="todos"),borderRadius:9}}>✅ 투두기록</button>
+          </div>
+
+          {/* 역량진단 히스토리 */}
+          {historyTab==="diagnosis" && <>
+            {(!myData?.history||myData.history.length===0)&&<div style={{...S.card,textAlign:"center",padding:"50px 20px",color:"#8a7260"}}><div style={{fontSize:36,marginBottom:10}}>📊</div><p>아직 진단 기록이 없어요</p><button onClick={()=>setQuiz({active:true,answers:{},domainIdx:0})} style={{...S.btn(),marginTop:12}}>진단 시작</button></div>}
+            {myData?.history?.length>=2&&(
+              <div style={{...S.card,marginBottom:12}}>
+                <p style={{fontSize:12,fontWeight:700,marginBottom:10,color:"#5a4a38"}}>📈 영역별 변화 추이</p>
+                {DOMAINS.map(d=>{ const recent=myData.history.slice(-4); const scores=recent.map(h=>calcScore(d,h.answers)); const last=scores[scores.length-1],prev=scores[scores.length-2]; const delta=last!==null&&prev!==null?last-prev:null; return <div key={d.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}><span style={{fontSize:12,width:18}}>{d.emoji}</span><span style={{fontSize:10,width:60,color:"#5a4a38",overflow:"hidden",whiteSpace:"nowrap"}}>{d.name}</span><div style={{flex:1,height:4,background:"#f0e8de",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${last||0}%`,background:d.color,borderRadius:2}}/></div><span style={{fontSize:11,width:28,textAlign:"right",fontWeight:700}}>{last??"-"}</span><span style={{fontSize:10,width:28,textAlign:"right",color:delta>0?"#6BA89A":delta<0?"#C0706A":"#aaa",fontWeight:600}}>{delta!==null?(delta>0?`+${delta}`:delta<0?`${delta}`:"–"):"–"}</span></div>; })}
+              </div>
+            )}
+            {[...(myData?.history||[])].reverse().map((h,i)=>{ const scores=DOMAINS.map(d=>({...d,score:calcScore(d,h.answers)})); const valid=scores.filter(d=>d.score!==null); const avg=valid.length?Math.round(valid.reduce((s,d)=>s+d.score,0)/valid.length):0; return <div key={h.id} style={S.card}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:13,fontWeight:700}}>📅 {fmtDate(h.date)}{i===0?<span style={{fontSize:10,color:"#8B7355",marginLeft:4}}>최근</span>:""}</span><span style={{fontSize:13,fontWeight:700,color:"#8B7355"}}>평균 {avg}점</span></div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{scores.map(d=>{const lv=getLevel(d.score);return <span key={d.id} style={{background:`${lv.color}18`,borderRadius:6,padding:"3px 7px",fontSize:10,color:lv.color,fontWeight:600}}>{d.emoji}{d.score!==null?d.score:"?"}</span>;})}</div></div>; })}
+          </>}
+
+          {/* 투두 히스토리 */}
+          {historyTab==="todos" && <>
+            {todoDateGroups.length === 0 && (
+              <div style={{...S.card,textAlign:"center",padding:"50px 20px",color:"#8a7260"}}>
+                <div style={{fontSize:36,marginBottom:10}}>✅</div>
+                <p>아직 완료한 투두가 없어요</p>
+                <p style={{fontSize:12,marginTop:6}}>투두를 체크하면 여기에 기록돼요!</p>
+              </div>
+            )}
+            {todoDateGroups.map(group => {
+              const isWeekly = group.type === "weekly";
+              const domainCounts = {};
+              group.items.forEach(h => {
+                if (!domainCounts[h.domainId]) domainCounts[h.domainId] = 0;
+                domainCounts[h.domainId]++;
+              });
+              return (
+                <div key={group.dateKey} style={S.card}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div>
+                      <span style={{fontSize:13,fontWeight:700}}>{isWeekly ? "📆" : "📅"} {group.dateKey}</span>
+                      <span style={{fontSize:10,color:"#aaa",marginLeft:6}}>{isWeekly ? "주간" : "일간"}</span>
+                    </div>
+                    <span style={{fontSize:12,color:"#8B7355",fontWeight:700}}>✅ {group.items.length}개 완료</span>
+                  </div>
+                  {/* 도메인별 요약 */}
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                    {Object.entries(domainCounts).map(([dId, cnt]) => {
+                      const dom = DOMAINS.find(x=>x.id===dId);
+                      if (!dom) return null;
+                      return <span key={dId} style={{background:`${dom.color}18`,borderRadius:6,padding:"3px 8px",fontSize:10,color:dom.color,fontWeight:600}}>{dom.emoji} {cnt}개</span>;
+                    })}
+                  </div>
+                  {/* 개별 항목 */}
+                  <div style={{borderTop:"1px solid #f0e8de",paddingTop:8}}>
+                    {group.items.map((h,i) => {
+                      const dom = DOMAINS.find(x=>x.id===h.domainId);
+                      return (
+                        <div key={h.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:i<group.items.length-1?"1px solid #f8f4ef":"none"}}>
+                          <span style={{fontSize:12,flexShrink:0}}>{dom?.emoji}</span>
+                          <span style={{fontSize:11,color:"#5a4a38",flex:1,lineHeight:1.5}}>{h.itemText}</span>
+                          <span style={{fontSize:10,color:"#aaa",flexShrink:0}}>{new Date(h.date).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {todoDateGroups.length > 0 && (
+              <div style={{textAlign:"center",fontSize:11,color:"#bbb",marginTop:8}}>최근 30일 기록 표시</div>
+            )}
+          </>}
         </div>
-      )}
+        );
+      })()}
 
       {/* BOTTOM NAV */}
       <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(245,237,224,.96)",backdropFilter:"blur(8px)",borderTop:"1px solid #e0d5c8",display:"flex",padding:"8px 16px 12px"}}>
