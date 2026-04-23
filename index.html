@@ -45,7 +45,7 @@
 <div id="root"></div>
 
 <!-- 카카오 SDK -->
-<script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js" crossorigin="anonymous"></script>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -54,12 +54,35 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 // ═══════════════════════════════════════════
-// 카카오 SDK 초기화
+// 카카오 SDK - 동적 로드
 // ═══════════════════════════════════════════
 const KAKAO_JS_KEY = "020b4c9ab70275412bdc1f47c15fdd46";
-if (window.Kakao && !window.Kakao.isInitialized()) {
-  window.Kakao.init(KAKAO_JS_KEY);
+
+let kakaoReady = false;
+
+function loadKakaoSDK() {
+  return new Promise((resolve) => {
+    if (window.Kakao) {
+      if (!window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
+      kakaoReady = true;
+      resolve(true);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://developers.kakao.com/sdk/js/kakao.js";
+    script.crossOrigin = "anonymous";
+    script.onload = () => {
+      if (window.Kakao && !window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
+      kakaoReady = true;
+      resolve(true);
+    };
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
 }
+
+// 앱 시작과 동시에 로드 시작
+loadKakaoSDK();
 
 // ═══════════════════════════════════════════
 // SUPABASE
@@ -385,41 +408,42 @@ function KakaoLoginScreen({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleKakaoLogin = () => {
-    if (!window.Kakao || !window.Kakao.isInitialized()) {
-      setError("카카오 SDK 초기화 오류. 잠시 후 다시 시도해 주세요.");
-      return;
-    }
+  const handleKakaoLogin = async () => {
     setLoading(true);
     setError("");
+    // SDK 동적 로드 및 초기화 보장
+    const ok = await loadKakaoSDK();
+    if (!ok || !window.Kakao) {
+      setError("카카오 SDK 로딩 실패. 네트워크를 확인해주세요.");
+      setLoading(false);
+      return;
+    }
     window.Kakao.Auth.login({
       success: async (authObj) => {
         try {
-          // 카카오 사용자 정보 가져오기
-          window.Kakao.API.request({
-            url: "/v2/user/me",
-            success: async (res) => {
-              const kid = `kakao_${res.id}`;
-              // Supabase에서 기존 사용자 확인
-              const existing = await sbGetUser(kid);
-              if (existing) {
-                setUid(kid);
-                onLogin(existing);
-              } else {
-                // 신규 유저 → 닉네임/캐릭터 설정 단계
-                setKakaoId(kid);
-                setStep("setup");
-              }
-              setLoading(false);
-            },
-            fail: (err) => {
-              console.error("Kakao API 오류:", err);
-              setError("카카오 정보를 가져오지 못했어요.");
-              setLoading(false);
+          const accessToken = authObj.access_token;
+          // Kakao.API.request 대신 fetch로 직접 호출 (CORS 우회)
+          const res = await fetch("https://kapi.kakao.com/v2/user/me", {
+            headers: {
+              "Authorization": `Bearer ${accessToken}`,
+              "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
             }
           });
+          if (!res.ok) throw new Error("카카오 API 응답 오류: " + res.status);
+          const data = await res.json();
+          const kid = `kakao_${data.id}`;
+          const existing = await sbGetUser(kid);
+          if (existing) {
+            setUid(kid);
+            onLogin(existing);
+          } else {
+            setKakaoId(kid);
+            setStep("setup");
+          }
+          setLoading(false);
         } catch (e) {
-          setError("로그인 처리 중 오류가 발생했어요.");
+          console.error("카카오 정보 오류:", e);
+          setError("카카오 정보를 가져오지 못했어요: " + e.message);
           setLoading(false);
         }
       },
