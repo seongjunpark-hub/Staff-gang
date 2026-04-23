@@ -353,8 +353,9 @@ function CharBadge({ user, compact }) {
 // ═══════════════════════════════════════════
 function LoginScreen({ allUsers, onLogin, onRegister }) {
   const [mode, setMode] = useState(allUsers.length > 0 ? "login" : "register");
-  // 로그인
-  const [selUser, setSelUser] = useState(null);
+  // 로그인 - selUserId로 저장해서 allUsers 리렌더링에도 유지
+  const [selUserId, setSelUserId] = useState(null);
+  const selUser = allUsers.find(u => u.id === selUserId) || null;
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState("");
   // 회원가입
@@ -432,7 +433,7 @@ function LoginScreen({ allUsers, onLogin, onRegister }) {
                     const char = CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
                     const lv = xpToLevel(u.xp||0);
                     return (
-                      <div key={u.id} onClick={()=>{setSelUser(u);setPin("");setPinError("");}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:12,marginBottom:6,cursor:"pointer",border:`2px solid ${selUser?.id===u.id?char.color:"#e8ddd0"}`,background:selUser?.id===u.id?`${char.color}12`:"white"}}>
+                      <div key={u.id} onClick={()=>{setSelUserId(u.id);setPin("");setPinError("");}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:12,marginBottom:6,cursor:"pointer",border:`2px solid ${selUser?.id===u.id?char.color:"#e8ddd0"}`,background:selUser?.id===u.id?`${char.color}12`:"white"}}>
                         <CharSVG charId={u.character} stage={levelToStage(lv)} size={36}/>
                         <div style={{flex:1}}>
                           <div style={{fontSize:13,fontWeight:600}}>{u.nickname}</div>
