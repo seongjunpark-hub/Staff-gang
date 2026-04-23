@@ -46,6 +46,7 @@
 
 <!-- 카카오 SDK -->
 
+<script src="https://t1.kakaocdn.net/kakao_js_sdk/2.6.0/kakao.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -62,33 +63,28 @@ let kakaoReady = false;
 
 function loadKakaoSDK() {
   return new Promise((resolve) => {
-    if (window.Kakao) {
-      if (!window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
+    if (window.Kakao && window.Kakao.Auth) {
+      if (!window.Kakao.isInitialized()) {
+        try { window.Kakao.init(KAKAO_JS_KEY); } catch(e){}
+      }
       kakaoReady = true;
       resolve(true);
-      return;
+    } else {
+      resolve(false);
     }
-    const script = document.createElement("script");
-    script.src = "https://developers.kakao.com/sdk/js/kakao.js";
-    script.crossOrigin = "anonymous";
-    script.onload = () => {
-      if (window.Kakao && !window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
-      kakaoReady = true;
-      resolve(true);
-    };
-    script.onerror = () => resolve(false);
-    document.head.appendChild(script);
   });
 }
 
-// 앱 시작과 동시에 로드 시작
-loadKakaoSDK();
+// 초기화
+if (window.Kakao && !window.Kakao.isInitialized()) {
+  try { window.Kakao.init(KAKAO_JS_KEY); kakaoReady = true; } catch(e){}
+}
 
 // ═══════════════════════════════════════════
 // SUPABASE
 // ═══════════════════════════════════════════
-const SB_URL = "https://cwkcaikiintioqlbtyld.supabase.co";
-const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3a2NhaWtpaW50aW9xbGJ0eWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzOTc4OTUsImV4cCI6MjA5MTk3Mzg5NX0.UlycbuY17UdjJPq65iGDNwjm-gdbZWpDmrWFAkwSo-Y";
+const SB_URL = "https://wqgewdkiqmejvfaflbta.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndxZ2V3ZGtpcW1lanZmYWZsYnRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4ODA5MDIsImV4cCI6MjA5MjQ1NjkwMn0.Xo80Gi5RgFxkIx38Ul4X69059WoxTS3xSmCLqlp0RT8";
 const SBH = { "Content-Type":"application/json", "apikey":SB_KEY, "Authorization":`Bearer ${SB_KEY}`, "Prefer":"return=representation" };
 
 async function sbGetUser(id) {
