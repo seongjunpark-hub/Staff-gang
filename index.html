@@ -18,27 +18,7 @@
     input, textarea, button { font-family: 'Noto Sans KR', sans-serif; }
     ::-webkit-scrollbar { display: none; }
 
-    /* 카카오 로그인 버튼 */
-    .kakao-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      width: 100%;
-      padding: 14px 20px;
-      background: #FEE500;
-      border: none;
-      border-radius: 12px;
-      font-size: 15px;
-      font-weight: 700;
-      color: #3A1D1D;
-      cursor: pointer;
-      box-shadow: 0 4px 16px rgba(254,229,0,.4);
-      transition: transform .15s, box-shadow .15s;
-    }
-    .kakao-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(254,229,0,.5); }
-    .kakao-btn:active { transform: translateY(0); }
-    .kakao-btn svg { width: 22px; height: 22px; flex-shrink: 0; }
+
   </style>
 </head>
 <body>
@@ -46,7 +26,6 @@
 
 <!-- 카카오 SDK -->
 
-<script src="https://t1.kakaocdn.net/kakao_js_sdk/2.6.0/kakao.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -54,31 +33,7 @@
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
 
-// ═══════════════════════════════════════════
-// 카카오 SDK - 동적 로드
-// ═══════════════════════════════════════════
-const KAKAO_JS_KEY = "020b4c9ab70275412bdc1f47c15fdd46";
 
-let kakaoReady = false;
-
-function loadKakaoSDK() {
-  return new Promise((resolve) => {
-    if (window.Kakao && window.Kakao.Auth) {
-      if (!window.Kakao.isInitialized()) {
-        try { window.Kakao.init(KAKAO_JS_KEY); } catch(e){}
-      }
-      kakaoReady = true;
-      resolve(true);
-    } else {
-      resolve(false);
-    }
-  });
-}
-
-// 초기화
-if (window.Kakao && !window.Kakao.isInitialized()) {
-  try { window.Kakao.init(KAKAO_JS_KEY); kakaoReady = true; } catch(e){}
-}
 
 // ═══════════════════════════════════════════
 // SUPABASE
@@ -93,7 +48,7 @@ async function sbGetUser(id) {
     const d = await r.json();
     if (!d?.length) return null;
     const u = d[0];
-    return { id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, todoHistory:u.todo_history||[], history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} };
+    return { id:u.id, nickname:u.nickname, character:u.character, pin:u.pin||"", xp:u.xp||0, todos:u.todos||{}, todoHistory:u.todo_history||[], history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} };
   } catch { return null; }
 }
 async function sbGetAllUsers() {
@@ -101,7 +56,7 @@ async function sbGetAllUsers() {
     const r = await fetch(`${SB_URL}/rest/v1/users?order=updated_at.desc`, { headers: SBH });
     const d = await r.json();
     if (!Array.isArray(d)) return [];
-    return d.map(u => ({ id:u.id, nickname:u.nickname, character:u.character, xp:u.xp||0, todos:u.todos||{}, todoHistory:u.todo_history||[], history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} }));
+    return d.map(u => ({ id:u.id, nickname:u.nickname, character:u.character, pin:u.pin||"", xp:u.xp||0, todos:u.todos||{}, todoHistory:u.todo_history||[], history:u.history||[], checkins:u.checkins||[], pokes:u.pokes||[], promoCleared:u.promo_cleared||{} }));
   } catch { return []; }
 }
 async function sbSaveUser(user) {
@@ -109,7 +64,7 @@ async function sbSaveUser(user) {
     await fetch(`${SB_URL}/rest/v1/users`, {
       method:"POST",
       headers:{ ...SBH, "Prefer":"resolution=merge-duplicates,return=minimal" },
-      body:JSON.stringify({ id:user.id, nickname:user.nickname, character:user.character, xp:user.xp||0, todos:user.todos||{}, todo_history:user.todoHistory||[], history:user.history||[], checkins:user.checkins||[], pokes:user.pokes||[], promo_cleared:user.promoCleared||{}, updated_at:new Date().toISOString() })
+      body:JSON.stringify({ id:user.id, nickname:user.nickname, character:user.character, pin:user.pin||"", xp:user.xp||0, todos:user.todos||{}, todo_history:user.todoHistory||[], history:user.history||[], checkins:user.checkins||[], pokes:user.pokes||[], promo_cleared:user.promoCleared||{}, updated_at:new Date().toISOString() })
     });
   } catch {}
 }
@@ -394,192 +349,144 @@ function CharBadge({ user, compact }) {
 }
 
 // ═══════════════════════════════════════════
-// 카카오 로그인 화면
+// 로그인 화면 (닉네임 + PIN)
 // ═══════════════════════════════════════════
-function KakaoLoginScreen({ onLogin }) {
-  const [step, setStep] = useState("main"); // "main" | "setup"
-  const [kakaoId, setKakaoId] = useState(null);
+function LoginScreen({ allUsers, onLogin, onRegister }) {
+  const [mode, setMode] = useState(allUsers.length > 0 ? "login" : "register");
+  // 로그인
+  const [selUser, setSelUser] = useState(null);
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  // 회원가입
   const [nickname, setNickname] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [newPin2, setNewPin2] = useState("");
   const [character, setCharacter] = useState("sprout");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [regError, setRegError] = useState("");
 
-  const handleKakaoLogin = async () => {
-    setLoading(true);
-    setError("");
-    // SDK 동적 로드 및 초기화 보장
-    const ok = await loadKakaoSDK();
-    if (!ok || !window.Kakao) {
-      setError("카카오 SDK 로딩 실패. 네트워크를 확인해주세요.");
-      setLoading(false);
-      return;
-    }
-    window.Kakao.Auth.login({
-      success: async (authObj) => {
-        try {
-          const accessToken = authObj.access_token;
-          // Kakao.API.request 대신 fetch로 직접 호출 (CORS 우회)
-          const res = await fetch("https://kapi.kakao.com/v2/user/me", {
-            headers: {
-              "Authorization": `Bearer ${accessToken}`,
-              "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"
-            }
-          });
-          if (!res.ok) throw new Error("카카오 API 응답 오류: " + res.status);
-          const data = await res.json();
-          const kid = `kakao_${data.id}`;
-          const existing = await sbGetUser(kid);
-          if (existing) {
-            setUid(kid);
-            onLogin(existing);
-          } else {
-            setKakaoId(kid);
-            setStep("setup");
-          }
-          setLoading(false);
-        } catch (e) {
-          console.error("카카오 정보 오류:", e);
-          setError("카카오 정보를 가져오지 못했어요: " + e.message);
-          setLoading(false);
-        }
-      },
-      fail: (err) => {
-        console.error("Kakao 로그인 실패:", err);
-        setError("카카오 로그인에 실패했어요. 다시 시도해 주세요.");
-        setLoading(false);
-      }
-    });
+  const S = {
+    card: { background:"white", borderRadius:20, padding:"24px", boxShadow:"0 2px 20px rgba(139,115,85,.12)" },
+    input: { width:"100%", border:"1.5px solid #e0d5c8", borderRadius:10, padding:"11px 14px", fontSize:14, outline:"none", marginTop:6, boxSizing:"border-box" },
+    btn: (bg="#8B7355") => ({ background:bg, color:"white", border:"none", borderRadius:10, padding:"13px", fontSize:14, fontWeight:700, cursor:"pointer", width:"100%" }),
+    outBtn: { background:"white", border:"1.5px solid #d0c8be", borderRadius:10, padding:"11px", fontSize:13, color:"#5a4a38", cursor:"pointer", width:"100%" },
   };
 
-  const handleSetup = async () => {
-    if (!nickname.trim()) return;
+  const handleLogin = async () => {
+    if (!selUser || pin.length !== 4) return;
     setLoading(true);
-    const user = {
-      id: kakaoId,
-      nickname: nickname.trim(),
-      character,
-      xp: 0,
-      todos: {},
-      history: [],
-      checkins: [],
-      pokes: [],
-      promoCleared: {}
-    };
-    await sbSaveUser(user);
-    setUid(kakaoId);
+    setPinError("");
+    const user = await sbGetUser(selUser.id);
+    if (!user) { setPinError("사용자를 찾을 수 없어요."); setLoading(false); return; }
+    if (user.pin !== pin) { setPinError("PIN이 틀렸어요."); setLoading(false); return; }
+    setUid(user.id);
     onLogin(user);
     setLoading(false);
   };
 
-  const S = {
-    card: { background:"white", borderRadius:20, padding:"28px 24px", boxShadow:"0 2px 20px rgba(139,115,85,.12)" },
-    input: { width:"100%", border:"1.5px solid #e0d5c8", borderRadius:10, padding:"12px 14px", fontSize:14, outline:"none", marginTop:6 },
-    btn: (bg="#8B7355") => ({ background:bg, color:"white", border:"none", borderRadius:10, padding:"13px 20px", fontSize:14, fontWeight:700, cursor:"pointer", width:"100%" }),
+  const handleRegister = async () => {
+    if (!nickname.trim()) { setRegError("닉네임을 입력해주세요."); return; }
+    if (newPin.length !== 4) { setRegError("PIN 4자리를 입력해주세요."); return; }
+    if (newPin !== newPin2) { setRegError("PIN이 일치하지 않아요."); return; }
+    setLoading(true);
+    setRegError("");
+    // 닉네임 중복 체크
+    const isDuplicate = allUsers.some(u => u.nickname.trim() === nickname.trim());
+    if (isDuplicate) { setRegError("이미 사용 중인 닉네임이에요!"); setLoading(false); return; }
+    const id = `u${Date.now()}`;
+    const user = { id, nickname:nickname.trim(), character, pin:newPin, xp:0, todos:{}, todoHistory:[], history:[], checkins:[], pokes:[], promoCleared:{} };
+    await sbSaveUser(user);
+    setUid(id);
+    onRegister(user);
+    setLoading(false);
   };
 
   return (
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#f5ede0,#ede4d8)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 20px"}}>
       <div style={{maxWidth:400,width:"100%"}}>
-
-        {/* 헤더 */}
-        <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{fontSize:52,marginBottom:10}}>✝️</div>
-          <h1 style={{fontFamily:"'Noto Serif KR',serif",fontSize:24,fontWeight:700,marginBottom:6}}>CCC 간사 자기관리</h1>
-          <p style={{fontSize:13,color:"#8a7260",lineHeight:1.7}}>팀과 함께 성장하는 사역 관리 앱</p>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:48,marginBottom:8}}>✝️</div>
+          <h1 style={{fontFamily:"'Noto Serif KR',serif",fontSize:22,fontWeight:700,marginBottom:4}}>CCC 간사 자기관리</h1>
+          <p style={{fontSize:13,color:"#8a7260"}}>팀과 함께 성장하는 사역 관리 앱</p>
         </div>
 
-        {/* STEP 1: 카카오 로그인 */}
-        {step === "main" && (
+        {/* 탭 */}
+        <div style={{display:"flex",background:"#e8ddd0",borderRadius:12,padding:4,marginBottom:16}}>
+          <button onClick={()=>{setMode("login");setPin("");setPinError("");}} style={{flex:1,padding:"10px",borderRadius:9,border:"none",background:mode==="login"?"#8B7355":"transparent",color:mode==="login"?"white":"#8a7260",fontSize:13,fontWeight:mode==="login"?700:400,cursor:"pointer"}}>로그인</button>
+          <button onClick={()=>{setMode("register");setRegError("");}} style={{flex:1,padding:"10px",borderRadius:9,border:"none",background:mode==="register"?"#8B7355":"transparent",color:mode==="register"?"white":"#8a7260",fontSize:13,fontWeight:mode==="register"?700:400,cursor:"pointer"}}>새 계정</button>
+        </div>
+
+        {/* 로그인 */}
+        {mode==="login" && (
           <div style={S.card}>
-            <div style={{textAlign:"center",marginBottom:24}}>
-              <p style={{fontSize:15,fontWeight:700,marginBottom:6}}>카카오로 시작하기</p>
-              <p style={{fontSize:12,color:"#8a7260",lineHeight:1.7}}>카카오 계정으로 로그인하면<br/>팀원과 함께 데이터를 공유할 수 있어요</p>
-            </div>
-
-            {error && (
-              <div style={{background:"#fff0f0",border:"1px solid #f0c0c0",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#c05050",marginBottom:16,textAlign:"center"}}>
-                {error}
+            {allUsers.length===0 ? (
+              <div style={{textAlign:"center",color:"#8a7260",padding:"20px 0"}}>
+                <p style={{marginBottom:12}}>아직 계정이 없어요!</p>
+                <button onClick={()=>setMode("register")} style={S.btn()}>새 계정 만들기</button>
               </div>
+            ) : (
+              <>
+                <p style={{fontSize:13,fontWeight:700,marginBottom:12}}>계정 선택</p>
+                <div style={{marginBottom:16}}>
+                  {allUsers.map(u => {
+                    const char = CHARACTERS.find(c=>c.id===u.character)||CHARACTERS[0];
+                    const lv = xpToLevel(u.xp||0);
+                    return (
+                      <div key={u.id} onClick={()=>{setSelUser(u);setPin("");setPinError("");}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:12,marginBottom:6,cursor:"pointer",border:`2px solid ${selUser?.id===u.id?char.color:"#e8ddd0"}`,background:selUser?.id===u.id?`${char.color}12`:"white"}}>
+                        <CharSVG charId={u.character} stage={levelToStage(lv)} size={36}/>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,fontWeight:600}}>{u.nickname}</div>
+                          <div style={{fontSize:11,color:"#8a7260"}}>Lv.{lv} · {char.name}</div>
+                        </div>
+                        {selUser?.id===u.id && <span style={{color:char.color,fontSize:14}}>✓</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {selUser && (
+                  <div>
+                    <label style={{fontSize:12,fontWeight:700,color:"#5a4a38"}}>PIN 4자리</label>
+                    <input type="password" maxLength={4} value={pin} onChange={e=>setPin(e.target.value.replace(/[^0-9]/g,""))} placeholder="●●●●" style={{...S.input,textAlign:"center",fontSize:20,letterSpacing:8}} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+                    {pinError && <p style={{fontSize:12,color:"#c05050",marginTop:6}}>{pinError}</p>}
+                    <button onClick={handleLogin} disabled={pin.length!==4||loading} style={{...S.btn(),marginTop:12,opacity:pin.length===4?1:.5}}>
+                      {loading?"로그인 중...":"로그인"}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
-
-            <button className="kakao-btn" onClick={handleKakaoLogin} disabled={loading}>
-              {loading ? (
-                <span>로그인 중...</span>
-              ) : (
-                <>
-                  {/* 카카오 로고 SVG */}
-                  <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path fillRule="evenodd" clipRule="evenodd" d="M9 0.5C4.306 0.5 0.5 3.534 0.5 7.283c0 2.407 1.538 4.52 3.873 5.727l-.988 3.685c-.088.327.284.59.574.394l4.32-2.877c.238.016.48.024.721.024 4.694 0 8.5-3.034 8.5-6.783C17.5 3.534 13.694.5 9 .5z" fill="#3A1D1D"/>
-                  </svg>
-                  카카오로 시작하기
-                </>
-              )}
-            </button>
-
-            <div style={{marginTop:20,padding:"14px",background:"#faf8f5",borderRadius:12,border:"1px solid #e8e0d8"}}>
-              <p style={{fontSize:11,color:"#8a7260",lineHeight:1.8,textAlign:"center"}}>
-                🔒 카카오 프로필 정보는 수집하지 않아요<br/>
-                로그인 식별을 위해 카카오 ID만 사용해요
-              </p>
-            </div>
           </div>
         )}
 
-        {/* STEP 2: 닉네임 & 캐릭터 설정 */}
-        {step === "setup" && (
+        {/* 회원가입 */}
+        {mode==="register" && (
           <div style={S.card}>
-            <div style={{textAlign:"center",marginBottom:20}}>
-              <div style={{fontSize:32,marginBottom:6}}>🌱</div>
-              <p style={{fontSize:16,fontWeight:700,fontFamily:"'Noto Serif KR',serif",marginBottom:4}}>처음 오셨군요!</p>
-              <p style={{fontSize:12,color:"#8a7260"}}>닉네임과 캐릭터를 설정해 주세요</p>
-            </div>
-
-            <div style={{marginBottom:18}}>
+            <div style={{marginBottom:14}}>
               <label style={{fontSize:12,fontWeight:700,color:"#5a4a38"}}>닉네임</label>
-              <input
-                value={nickname}
-                onChange={e => setNickname(e.target.value)}
-                placeholder="예: 박간사, 믿음이, 소망 간사"
-                style={S.input}
-                maxLength={12}
-                autoFocus
-              />
-              <div style={{fontSize:10,color:"#bbb",marginTop:4,textAlign:"right"}}>{nickname.length}/12</div>
+              <input value={nickname} onChange={e=>setNickname(e.target.value)} placeholder="예: 박간사, 믿음이" style={S.input} maxLength={12}/>
             </div>
-
-            <div style={{marginBottom:24}}>
-              <label style={{fontSize:12,fontWeight:700,color:"#5a4a38",display:"block",marginBottom:10}}>나의 캐릭터</label>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:12,fontWeight:700,color:"#5a4a38"}}>PIN 4자리 설정</label>
+              <input type="password" maxLength={4} value={newPin} onChange={e=>setNewPin(e.target.value.replace(/[^0-9]/g,""))} placeholder="숫자 4자리" style={{...S.input,textAlign:"center",fontSize:20,letterSpacing:8}}/>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:700,color:"#5a4a38"}}>PIN 확인</label>
+              <input type="password" maxLength={4} value={newPin2} onChange={e=>setNewPin2(e.target.value.replace(/[^0-9]/g,""))} placeholder="숫자 4자리" style={{...S.input,textAlign:"center",fontSize:20,letterSpacing:8}}/>
+            </div>
+            <div style={{marginBottom:18}}>
+              <label style={{fontSize:12,fontWeight:700,color:"#5a4a38",display:"block",marginBottom:8}}>캐릭터 선택</label>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                {CHARACTERS.map(c => (
-                  <div
-                    key={c.id}
-                    onClick={() => setCharacter(c.id)}
-                    style={{
-                      border:`2px solid ${character===c.id ? c.color : "#e0d5c8"}`,
-                      borderRadius:14,
-                      padding:"10px 6px",
-                      textAlign:"center",
-                      cursor:"pointer",
-                      background: character===c.id ? `${c.color}18` : "white",
-                      transition:"all .15s"
-                    }}
-                  >
-                    <div style={{display:"flex",justifyContent:"center"}}>
-                      <CharSVG charId={c.id} stage={0} size={44}/>
-                    </div>
-                    <div style={{fontSize:11,fontWeight:700,color:c.color,marginTop:4}}>{c.name}</div>
-                    <div style={{fontSize:9,color:"#aaa",marginTop:2,lineHeight:1.3}}>{c.desc}</div>
+                {CHARACTERS.map(c=>(
+                  <div key={c.id} onClick={()=>setCharacter(c.id)} style={{border:`2px solid ${character===c.id?c.color:"#e0d5c8"}`,borderRadius:12,padding:"10px 6px",textAlign:"center",cursor:"pointer",background:character===c.id?`${c.color}18`:"white"}}>
+                    <div style={{display:"flex",justifyContent:"center"}}><CharSVG charId={c.id} stage={0} size={44}/></div>
+                    <div style={{fontSize:11,fontWeight:600,color:c.color,marginTop:4}}>{c.name}</div>
                   </div>
                 ))}
               </div>
             </div>
-
-            <button
-              onClick={handleSetup}
-              disabled={!nickname.trim() || loading}
-              style={{...S.btn(), opacity: nickname.trim() && !loading ? 1 : 0.5, cursor: nickname.trim() && !loading ? "pointer" : "not-allowed"}}
-            >
-              {loading ? "저장 중..." : "사역 시작하기 🌱"}
+            {regError && <p style={{fontSize:12,color:"#c05050",marginBottom:10}}>{regError}</p>}
+            <button onClick={handleRegister} disabled={!nickname.trim()||newPin.length!==4||loading} style={{...S.btn(),opacity:nickname.trim()&&newPin.length===4?1:.5}}>
+              {loading?"저장 중...":"시작하기 🌱"}
             </button>
           </div>
         )}
@@ -622,21 +529,9 @@ function App() {
 
   useEffect(() => { const iv = setInterval(loadAll, 15000); return () => clearInterval(iv); }, [loadAll]);
 
-  const handleKakaoLoginSuccess = useCallback((userData) => {
-    setMyId(userData.id);
-    setMyData(userData);
-    setAllUsers(prev => {
-      const others = prev.filter(u => u.id !== userData.id);
-      return [...others, userData];
-    });
-    setTab("home");
-  }, []);
+
 
   const handleLogout = useCallback(() => {
-    // 카카오 로그아웃
-    if (window.Kakao && window.Kakao.Auth && window.Kakao.Auth.getAccessToken()) {
-      window.Kakao.Auth.logout(() => {});
-    }
     setMyId(null);
     setMyData(null);
     setUid("");
@@ -758,7 +653,13 @@ function App() {
   );
 
   // ── 카카오 로그인 화면
-  if (!myId) return <KakaoLoginScreen onLogin={handleKakaoLoginSuccess}/>;
+  if (!myId) return (
+    <LoginScreen
+      allUsers={allUsers}
+      onLogin={(user) => { setMyId(user.id); setMyData(user); setAllUsers(prev => [...prev.filter(u=>u.id!==user.id), user]); setTab("home"); }}
+      onRegister={(user) => { setMyId(user.id); setMyData(user); setAllUsers(prev => [...prev, user]); setTab("home"); }}
+    />
+  );
 
   // ── QUIZ
   if (quiz.active) return (
