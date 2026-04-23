@@ -487,6 +487,7 @@ function App() {
   const [checkin, setCheckin] = useState({ type:"daily", answers:{}, note:"" });
   const [teamMember, setTeamMember] = useState(null);
   const [promoModal, setPromoModal] = useState(null);
+  const [historyTab, setHistoryTab] = useState("diagnosis");
 
   const loadAll = useCallback(async () => {
     const users = await sbGetAllUsers();
@@ -912,8 +913,6 @@ function App() {
 
       {/* HISTORY */}
       {tab==="history" && (()=>{
-        const [historyTab, setHistoryTab] = useState("diagnosis");
-
         // 투두 히스토리: 날짜별로 그룹핑
         const todoHist = myData?.todoHistory || [];
         const todoByDate = {};
